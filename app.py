@@ -19,7 +19,7 @@ except:
 # Initialize Clients
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai_client = genai.Client(api_key=GENAI_API_KEY)
-MODEL_ID = "gemini-3.1-flash-lite-preview"
+MODEL_ID = "gemini-3.1-pro-preview"
 
 st.set_page_config(page_title="DHL Booking Cloud Extractor", layout="wide")
 
@@ -285,3 +285,4 @@ if st.session_state.get('show_history'):
     except Exception as e:
 
         st.error(f"⚠️ เกิดข้อผิดพลาดในการโหลดประวัติ: {e}")
+
