@@ -13,9 +13,8 @@ try:
     GENAI_API_KEY = st.secrets["GENAI_API_KEY"]
 except:
     # สำหรับใช้รันในเครื่องตัวเอง (Local) ถ้ายังไม่ได้ตั้งค่า Secrets
-    SUPABASE_URL = "https://jplstjguectqsidziytq.supabase.co"
-    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpwbHN0amd1ZWN0cXNpZHppeXRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyOTYwODIsImV4cCI6MjA4ODg3MjA4Mn0.xd53nAbObKW57E1frrPI-DzgJmIEDOtscDK0a0b8xV4" # ใส่ Key เดิมของคุณ
-    GENAI_API_KEY = "AIzaSyCYWd_TItL7VMgzj6J0aanz4kRpd5-WI00"
+    st.error("❌ ไม่พบ API Keys ในระบบ Secrets กรุณาตั้งค่าที่ Settings > Secrets")
+    st.stop()
 
 # Initialize Clients
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -284,4 +283,5 @@ if st.session_state.get('show_history'):
             st.warning("ยังไม่มีข้อมูลในประวัติ")
             
     except Exception as e:
+
         st.error(f"⚠️ เกิดข้อผิดพลาดในการโหลดประวัติ: {e}")
