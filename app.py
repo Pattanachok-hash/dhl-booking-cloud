@@ -7,7 +7,7 @@ import json
 from google import genai
 from supabase import create_client, Client
 
-# --- 1. CONFIGURATION (Security Update) ---
+# --- 1. CONFIGURATION ---
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -63,12 +63,14 @@ def extract_info_from_pdf_vision(file_bytes):
     Rules: 
     - cy_date: 1st date to receive containers.
     - return_date_1st: refer to '1st return date' or 'Turn-In Date'.
-    - country: extract name from port_of_destination context.
+    - country: 
+  1. First, try to extract the final destination country from 'CONSIGNEE', 'NOTIFY', or 'PL. OF DELIVERY'. 
+  2. If these fields are missing, OR if the address found belongs to the origin country (e.g., Thailand), you MUST infer the destination country based on the 'Port of Discharge' (e.g., if Port of Discharge is "FOS SUR MER", output "France"). 
+  3. STRICTLY DO NOT output the origin/shipper's country (e.g., "Thailand").
     - Dates: dd/mm/yyyy. Cut-offs: dd/mm/yyyy hh:mm.
     - fcl_or_lcl: "FCL" or "LCL". by_air_or_sea: "Air" or "Sea".
     - ETD must be less than ETA.
     - If any field is not found, use null. Return ONLY JSON.
-    - Paperless code is the 4-digit number.
     - For LCL shipment, you may take time to process because the format is informal.
     Sometimes, they use day instead of date so you may find out the ref date in the file first then calculate again.
     - liner_cutoff: Look for 'Liner Cut-off', 'Gate Closing', 'Closing Date', or 'Last Load'.
@@ -77,6 +79,11 @@ def extract_info_from_pdf_vision(file_bytes):
     - The container type/s should be filled only "40HC" or "20GP"
     - si_cutoff: Look for 'SI Cut-off', 'Document Close Date', 'Doc Cut-off', or 'Shipping Particular Cut-off'.
     - If a cut-off is mentioned as a day of the week, calculate the date relative to the 'Run Date' or 'Date of Issue' in the document.
+    - paperless_code: FIRST, actively search for the exact 4-digit number written explicitly next to "PAPERLESS CODE"
+      in the document (e.g., 2836). ONLY if it is completely missing from the document, then you may use fallback logic based on the terminal. 
+    - vessel_name: Use the first vessel/voyage mentioned (e.g., DP WORLD JEDDAH). 
+      If there is a connecting voyage, you may include both as "First Vessel / Connecting Vessel".
+    - Validation Rule: ETD must always be an earlier date than ETA.
     """
     try:
         # 2. ปรับโครงสร้างการส่งข้อมูลใหม่ให้ถูก format
@@ -93,7 +100,8 @@ def extract_info_from_pdf_vision(file_bytes):
             ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                temperature=0.1
+                temperature=0.0,
+                seed=999
             )
         )
         return json.loads(response.text)
