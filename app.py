@@ -84,6 +84,7 @@ def extract_info_from_pdf_vision(file_bytes):
     - vessel_name: Use the first vessel/voyage mentioned (e.g., DP WORLD JEDDAH). 
       If there is a connecting voyage, you may include both as "First Vessel / Connecting Vessel".
     - Validation Rule: ETD must always be an earlier date than ETA.
+    - booking_no: The document contains multiple reference numbers (e.g., 'Carrier Ref' and 'Booking Ref'). You MUST extract ONLY the 'Carrier Ref' (the one issued by the shipping line, usually numeric). DO NOT extract the 'Booking Ref'.
     """
     try:
         # 2. ปรับโครงสร้างการส่งข้อมูลใหม่ให้ถูก format
