@@ -67,7 +67,9 @@ def extract_info_from_pdf_vision(file_bytes):
   1. First, try to extract the final destination country from 'CONSIGNEE', 'NOTIFY', or 'PL. OF DELIVERY'. 
   2. If these fields are missing, OR if the address found belongs to the origin country (e.g., Thailand), you MUST infer the destination country based on the 'Port of Discharge' (e.g., if Port of Discharge is "FOS SUR MER", output "France"). 
   3. STRICTLY DO NOT output the origin/shipper's country (e.g., "Thailand").
-    - Dates: dd/mm/yyyy. Cut-offs: dd/mm/yyyy hh:mm.
+    - FORMATTING RULE FOR ALL DATES: You MUST CONVERT every date into exact "dd/mm/yyyy" format, regardless of how it appears in the text. 
+    - Example: If the document shows "2026/03/16", "16-Mar-26", or "03/16/2026", you MUST output "16/03/2026". DO NOT just copy the raw text.
+    - Cut-offs format MUST be "dd/mm/yyyy hh:mm".
     - fcl_or_lcl: "FCL" or "LCL". by_air_or_sea: "Air" or "Sea".
     - ETD must be less than ETA.
     - If any field is not found, use null. Return ONLY JSON.
