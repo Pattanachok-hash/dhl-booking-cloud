@@ -61,7 +61,7 @@ def extract_info_from_pdf_vision(file_bytes):
     return_place, container_type, paperless_code.
     
     Rules: 
-    - cy_date: 1st date to receive containers.
+    - cy_date: means 1st date that i can receive containers. Look for 'Empty Pick up date' or date to pick up empty container.
     - return_date_1st: refer to '1st return date' or 'Turn-In Date'.
     - country: 
   1. First, try to extract the final destination country from 'CONSIGNEE', 'NOTIFY', or 'PL. OF DELIVERY'. 
