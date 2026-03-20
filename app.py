@@ -84,7 +84,7 @@ def extract_info_from_pdf_vision(file_bytes):
     - vessel_name: Use the first vessel/voyage mentioned (e.g., DP WORLD JEDDAH). 
       If there is a connecting voyage, you may include both as "First Vessel / Connecting Vessel".
     - Validation Rule: ETD must always be an earlier date than ETA.
-    - booking_no: The document contains multiple reference numbers (e.g., 'Carrier Ref' and 'Booking Ref'). You MUST extract ONLY the 'Carrier Ref' (the one issued by the shipping line, usually numeric). DO NOT extract the 'Booking Ref'.
+    - booking_no: First, try to extract the 'Carrier Ref'. IF 'Carrier Ref' is NOT found, extract the 'Booking No.' or 'Booking Ref' (e.g., BKKG...).
     """
     try:
         # 2. ปรับโครงสร้างการส่งข้อมูลใหม่ให้ถูก format
@@ -119,6 +119,11 @@ def save_to_cloud(data_list):
         # กรองเอาเฉพาะที่มีเลข Booking
         df_clean = df_temp.dropna(subset=['booking_no'])
         df_unique = df_clean.drop_duplicates(subset=['booking_no'], keep='last')
+        # --- 🌟 เพิ่มโค้ด 3 บรรทัดนี้เพื่อดัก Error ---
+        if df_unique.empty:
+            st.warning("⚠️ ไม่พบเลข Booking No. ในเอกสาร จึงไม่ได้บันทึกข้อมูลลงฐานข้อมูล")
+            return False
+        # ----------------------------------------
         
         supabase.table("bookings").upsert(df_unique.to_dict(orient='records')).execute()
         supabase.table("booking_revisions").insert(df_temp.to_dict(orient='records')).execute()
