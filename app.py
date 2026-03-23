@@ -314,6 +314,8 @@ def render_table(df: pd.DataFrame, table_id: str = "main") -> None:
     <style>
     .dhl-table-wrap {
         overflow-x: auto;
+        overflow-y: auto;
+        max-height: 500px;
         border: 1px solid #e8e8e8;
         border-radius: 12px;
         margin-bottom: 8px;
@@ -329,6 +331,9 @@ def render_table(df: pd.DataFrame, table_id: str = "main") -> None:
     .dhl-table thead tr {
         background: #fafafa;
         border-bottom: 1px solid #e8e8e8;
+        position: sticky;
+        top: 0;
+        z-index: 1;
     }
     .dhl-table thead th {
         padding: 11px 14px;
