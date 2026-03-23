@@ -19,9 +19,9 @@ try:
     TBL_BOOKINGS  = "bookings"
     TBL_REVISIONS = "booking_revisions"
 except Exception:
-    SUPABASE_URL  = "https://jplstjguectqsidziytq.supabase.co"
-    SUPABASE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpwbHN0amd1ZWN0cXNpZHppeXRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyOTYwODIsImV4cCI6MjA4ODg3MjA4Mn0.xd53nAbObKW57E1frrPI-DzgJmIEDOtscDK0a0b8xV4"
-    GEMINI_KEY    = "AIzaSyDH5ncIbMeX7hzbNsaNygA9LSXf9aNK-KE"
+    # สำหรับใช้รันในเครื่องตัวเอง (Local) ถ้ายังไม่ได้ตั้งค่า Secrets
+    st.error("❌ ไม่พบ API Keys ในระบบ Secrets กรุณาตั้งค่าที่ Settings > Secrets")
+    st.stop()
     TBL_BOOKINGS  = "test_bookings"
     TBL_REVISIONS = "test_booking_revisions"
 
