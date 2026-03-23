@@ -15,7 +15,7 @@ from datetime import datetime
 try:
     SUPABASE_URL  = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY  = st.secrets["SUPABASE_KEY"]
-    GEMINI_KEY    = st.secrets["GEMINI_API_KEY"]
+    GEMINI_KEY    = st.secrets["GENAI_API_KEY"]
     TBL_BOOKINGS  = "bookings"
     TBL_REVISIONS = "booking_revisions"
 except Exception:
