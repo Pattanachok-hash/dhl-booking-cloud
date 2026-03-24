@@ -1,4 +1,5 @@
 import io
+import re
 import json
 import base64
 import pytz
@@ -132,7 +133,7 @@ st.markdown(f"""
 COLUMNS_ORDER = [
     "booking_no", "loading_at", "fcl_or_lcl", "by_air_or_sea",
     "country", "port_of_destination", "liner_name", "vessel_name",
-    "no_container", "container_type", "no_pallet",
+    "no_container", "container_type", "container_summary", "no_pallet",
     "etd", "eta", "liner_cutoff", "vgm_cutoff", "si_cutoff",
     "cy_date", "cy_at", "return_date_1st", "return_place",
     "paperless_code", "updated_at",
@@ -174,6 +175,7 @@ Return ONLY a JSON object (no markdown, no explanation):
   "vessel_name":         "vessel/voyage (include connecting if any)",
   "no_container":        number or null,
   "container_type":      "40HC or 20GP or null",
+  "container_summary":   "full container mix e.g. '2X40HC+1X20GP' or '1X20GP' — combine all container types shown",
   "no_pallet":           number or null,
   "cy_at":               "empty pick-up depot",
   "return_place":        "laden return location",
@@ -186,6 +188,7 @@ Rules:
 - cy_at: depot for picking up empty container.
 - return_place: Laden Return / Return to location.
 - paperless_code: exact 4-digit number next to "PAPERLESS CODE"; fallback by terminal only if missing.
+- container_summary: combine all container counts and types into one string e.g. "2X40HC+1X20GP". If only one type, still format as e.g. "1X20GP".
 - null if not found."""
  
  
@@ -652,6 +655,13 @@ if page == "📤 Upload & Extract":
                     no_pallet      = ec11.number_input("No. Pallet",     min_value=0,
                                                         value=int(row_data.get("no_pallet") or 0))
 
+                    ec9b, _ = st.columns([2, 1])
+                    container_summary = ec9b.text_input(
+                        "Container Summary (สำหรับ SI — ถ้ามีหลายประเภท)",
+                        value=row_data.get("container_summary") or "",
+                        placeholder="เช่น 2X40HC+1X20GP",
+                    )
+
                     ec12, ec13 = st.columns(2)
                     cy_at          = ec12.text_input("CY At",            value=row_data.get("cy_at") or "")
                     return_place   = ec13.text_input("Return Place",     value=row_data.get("return_place") or "")
@@ -684,8 +694,9 @@ if page == "📤 Upload & Extract":
                         "vessel_name":       vessel_name or None,
                         "paperless_code":    paperless_code or None,
                         "no_container":      no_container or None,
-                        "container_type":    container_type or None,
-                        "no_pallet":         no_pallet or None,
+                        "container_type":      container_type or None,
+                        "container_summary":   container_summary or None,
+                        "no_pallet":           no_pallet or None,
                         "cy_at":             cy_at or None,
                         "return_place":      return_place or None,
                         "etd":               etd or None,
@@ -897,7 +908,11 @@ null if not found."""
         safe_write("I13", carrier)
  
         # ── Container count label ───────────────────────────────
-        safe_write("B35", f"{len(containers)}X40' HC" if containers else "")
+        cont_summary = s(booking.get("container_summary"))
+        if not cont_summary:
+            cont_type    = s(booking.get("container_type")) or "40HC"
+            cont_summary = f"{len(containers)}X{cont_type}"
+        safe_write("B35", cont_summary)
  
         # ── I36/J36 = KGS. / CBM (หน่วยใต้ตัวเลข total) ───────
         safe_write("I36", "KGS.")
@@ -1037,6 +1052,21 @@ null if not found."""
                     safe_write_rc(mark_row, 1, line)
                     mark_row += 1
  
+        def _parse_pkg(val):
+            m = re.match(r'^([\d,]+)\s+(.*)', str(val or '').strip())
+            if m:
+                try:
+                    num  = int(m.group(1).replace(',', ''))
+                    unit = m.group(2).strip()
+                    if unit.upper().startswith("PP."):
+                        unit = unit[3:]
+                    return num, unit
+                except Exception:
+                    pass
+            return 0, "CARTONS"
+
+        first_pkg_unit = _parse_pkg(invoices[0].get("cartons"))[1] if invoices else "CARTONS"
+
         gw_cells, cbm_cells, ctn_cells = [], [], []
  
         for idx, inv in enumerate(invoices):
@@ -1046,10 +1076,12 @@ null if not found."""
  
             # col B = "CARTONS" เฉพาะ invoice แรกเท่านั้น
             if idx == 0:
-                safe_write_rc(base, 2, "CARTONS")
+                safe_write_rc(base, 2, first_pkg_unit)
  
             # row+0: qty — ใส่สีเฉพาะ C (จำนวน + unit เช่น "1,389 CARTONS" หรือ "40 PP.PALLETS")
-            safe_write_rc(base, 3, s(inv.get("cartons")) or 0)
+            qty_num, pkg_unit = _parse_pkg(inv.get("cartons"))
+            safe_write_rc(base, 3, qty_num or 0)
+            safe_write_rc(base, 4, pkg_unit)
             safe_write_rc(base, 5, f"({s(inv.get('quantity_str'))})")
             cell_c = ws.cell(row=base, column=3)
             if not isinstance(cell_c, MergedCell):
@@ -1081,8 +1113,8 @@ null if not found."""
             safe_write("I35", "=" + "+".join(gw_cells))
             safe_write("J35", "=" + "+".join(cbm_cells))
         if ctn_cells:
-            # B37 = reference C ของ invoice แรก (cartons เป็น string เช่น "1,389 CARTONS")
-            safe_write("B37", f"={ctn_cells[0]}")
+            # B37 = SUM ตัวเลข C ของทุก invoice
+            safe_write("B37", "=" + "+".join(ctn_cells))
  
         # ── HS Code, Freight, BL ─────────────────────────────────
         # bl_row / hs_row / fr_row คำนวณและวาด border ไว้แล้วใน STEP 1-4
