@@ -610,6 +610,99 @@ if page == "📤 Upload & Extract":
                     file_name="DHL_Bookings.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
+
+            # ── Edit Booking ──────────────────────────────────────
+            st.divider()
+            st.subheader("✏️ แก้ไขข้อมูล Booking")
+
+            all_bk_nos = [r.get("booking_no") for r in res.data if r.get("booking_no")]
+            edit_bk = st.selectbox("เลือก Booking ที่ต้องการแก้ไข",
+                                   ["-- เลือก --"] + all_bk_nos, key="edit_bk_select")
+
+            if edit_bk != "-- เลือก --":
+                row_data = next((r for r in res.data if r.get("booking_no") == edit_bk), {})
+
+                with st.form("edit_booking_form"):
+                    st.markdown(f"**Booking No.: {edit_bk}**")
+                    ec1, ec2, ec3 = st.columns(3)
+
+                    loading_at     = ec1.selectbox("Loading At",    ["ICD", "ALPHA"],
+                                                    index=["ICD","ALPHA"].index(row_data.get("loading_at","ICD"))
+                                                    if row_data.get("loading_at") in ["ICD","ALPHA"] else 0)
+                    fcl_or_lcl     = ec2.selectbox("FCL/LCL",       ["FCL","LCL"],
+                                                    index=["FCL","LCL"].index(row_data.get("fcl_or_lcl","FCL"))
+                                                    if row_data.get("fcl_or_lcl") in ["FCL","LCL"] else 0)
+                    by_air_or_sea  = ec3.selectbox("Mode",          ["Sea","Air"],
+                                                    index=["Sea","Air"].index(row_data.get("by_air_or_sea","Sea"))
+                                                    if row_data.get("by_air_or_sea") in ["Sea","Air"] else 0)
+
+                    ec4, ec5, ec6 = st.columns(3)
+                    country        = ec4.text_input("Country",           value=row_data.get("country") or "")
+                    port_of_dest   = ec5.text_input("Port of Dest.",     value=row_data.get("port_of_destination") or "")
+                    liner_name     = ec6.text_input("Liner",             value=row_data.get("liner_name") or "")
+
+                    ec7, ec8 = st.columns([2, 1])
+                    vessel_name    = ec7.text_input("Vessel / Voyage",   value=row_data.get("vessel_name") or "")
+                    paperless_code = ec8.text_input("Paperless Code",    value=row_data.get("paperless_code") or "")
+
+                    ec9, ec10, ec11 = st.columns(3)
+                    no_container   = ec9.number_input("No. Container",   min_value=0,
+                                                       value=int(row_data.get("no_container") or 0))
+                    container_type = ec10.text_input("Container Type",   value=row_data.get("container_type") or "")
+                    no_pallet      = ec11.number_input("No. Pallet",     min_value=0,
+                                                        value=int(row_data.get("no_pallet") or 0))
+
+                    ec12, ec13 = st.columns(2)
+                    cy_at          = ec12.text_input("CY At",            value=row_data.get("cy_at") or "")
+                    return_place   = ec13.text_input("Return Place",     value=row_data.get("return_place") or "")
+
+                    st.markdown("**วันที่สำคัญ**")
+                    ed1, ed2, ed3 = st.columns(3)
+                    etd            = ed1.text_input("ETD (dd/mm/yyyy)",  value=row_data.get("etd") or "")
+                    eta            = ed2.text_input("ETA (dd/mm/yyyy)",  value=row_data.get("eta") or "")
+                    cy_date        = ed3.text_input("CY Date",           value=row_data.get("cy_date") or "")
+
+                    ed4, ed5, ed6 = st.columns(3)
+                    liner_cutoff   = ed4.text_input("Liner Cutoff",      value=row_data.get("liner_cutoff") or "")
+                    vgm_cutoff     = ed5.text_input("VGM Cutoff",        value=row_data.get("vgm_cutoff") or "")
+                    si_cutoff      = ed6.text_input("SI Cutoff",         value=row_data.get("si_cutoff") or "")
+
+                    ed7, ed8 = st.columns(2)
+                    return_date    = ed7.text_input("1st Return Date",   value=row_data.get("return_date_1st") or "")
+
+                    submitted = st.form_submit_button("💾 บันทึกการแก้ไข", use_container_width=True)
+
+                if submitted:
+                    update_payload = {
+                        "booking_no":        edit_bk,
+                        "loading_at":        loading_at,
+                        "fcl_or_lcl":        fcl_or_lcl,
+                        "by_air_or_sea":     by_air_or_sea,
+                        "country":           country or None,
+                        "port_of_destination": port_of_dest or None,
+                        "liner_name":        liner_name or None,
+                        "vessel_name":       vessel_name or None,
+                        "paperless_code":    paperless_code or None,
+                        "no_container":      no_container or None,
+                        "container_type":    container_type or None,
+                        "no_pallet":         no_pallet or None,
+                        "cy_at":             cy_at or None,
+                        "return_place":      return_place or None,
+                        "etd":               etd or None,
+                        "eta":               eta or None,
+                        "cy_date":           cy_date or None,
+                        "liner_cutoff":      liner_cutoff or None,
+                        "vgm_cutoff":        vgm_cutoff or None,
+                        "si_cutoff":         si_cutoff or None,
+                        "return_date_1st":   return_date or None,
+                    }
+                    try:
+                        supabase.table(TBL_BOOKINGS).upsert(update_payload).execute()
+                        st.success(f"✅ บันทึก {edit_bk} เรียบร้อยแล้ว")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Save Error: {e}")
+
         else:
             st.info("📌 ยังไม่มีข้อมูล — อัปโหลด PDF เพื่อเริ่มต้น")
  
