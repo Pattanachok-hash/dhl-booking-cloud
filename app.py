@@ -1246,7 +1246,7 @@ null if not found."""
     col_e1, col_e2 = st.columns(2)
     with col_e1:
         freight_terms = st.selectbox("Freight Terms", ["FREIGHT COLLECT","FREIGHT PREPAID"])
-        bl_type       = st.selectbox("BL Type", ["Sea Waybill","Original B/L","Telex Release"])
+        bl_type       = st.selectbox("BL Type", ["Sea Waybill","Original B/L","Surrender B/L","Telex Release"])
         revised       = st.checkbox("REVISED", value=False)
     with col_e2:
         hs_code_input = st.text_input("HS Code (คั่นด้วย , )", placeholder="8415.10, 3926.90")
