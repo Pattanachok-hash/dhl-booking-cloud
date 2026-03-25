@@ -183,7 +183,7 @@ Return ONLY a JSON object (no markdown, no explanation):
  
 Rules:
 - booking_no: prefer Carrier Ref; fallback to Booking No. / Booking Ref.
-- country: infer from Port of Discharge if consignee is Thai.
+- country: use consignee's country if clearly stated in address; otherwise infer from Port of Discharge.
 - cy_at: depot for picking up empty container.
 - return_place: Laden Return / Return to location.
 - paperless_code: exact 4-digit number from labels "PAPERLESS CODE", "PORT CODE", or inside parentheses like "(KERRY : 2816)" — extract only the number.
