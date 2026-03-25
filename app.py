@@ -133,7 +133,7 @@ st.markdown(f"""
 COLUMNS_ORDER = [
     "booking_no", "loading_at", "fcl_or_lcl", "by_air_or_sea",
     "country", "port_of_destination", "liner_name", "vessel_name",
-    "no_container", "container_type", "container_summary", "no_pallet",
+    "no_container", "container_type", "no_pallet",
     "etd", "eta", "liner_cutoff", "vgm_cutoff", "si_cutoff",
     "cy_date", "cy_at", "return_date_1st", "return_place",
     "paperless_code", "updated_at",
@@ -155,7 +155,7 @@ Return ONLY a JSON object (no markdown, no explanation):
 Rules:
 - Dates: dd/mm/yyyy. Cut-offs include hh:mm.
 - cy_date: Empty Pick-up date / date to collect empty container.
-- return_date_1st: 1st Return Date / Turn-In Date.
+- return_date_1st: 1st Return Date / Turn-In Date / Gate-In Date.
 - liner_cutoff: Gate Closing / Closing Date / CY Cut-off / Last Load.
 - si_cutoff: SI Cut-off / Doc Cut-off / Shipping Particular Cut-off.
 - If a cut-off shows only a weekday (e.g. "THU"), calculate the actual date from the document date or ETD.
@@ -174,12 +174,11 @@ Return ONLY a JSON object (no markdown, no explanation):
   "liner_name":          "shipping line",
   "vessel_name":         "vessel/voyage (include connecting if any)",
   "no_container":        number or null,
-  "container_type":      "40HC or 20GP or null",
-  "container_summary":   "full container mix e.g. '2X40HC+1X20GP' or '1X20GP' — combine all container types shown",
+  "container_type":      "ALL container counts+types combined e.g. '1X40HC+1X20GP' or '2X40HC' — null if LCL or no container",
   "no_pallet":           number or null,
   "cy_at":               "empty pick-up depot",
   "return_place":        "laden return location",
-  "paperless_code":      "4-digit code or null"
+  "paperless_code":      "4-digit code from PAPERLESS CODE or PORT CODE label e.g. 2836, or null"
 }
  
 Rules:
@@ -187,8 +186,8 @@ Rules:
 - country: infer from Port of Discharge if consignee is Thai.
 - cy_at: depot for picking up empty container.
 - return_place: Laden Return / Return to location.
-- paperless_code: exact 4-digit number next to "PAPERLESS CODE"; fallback by terminal only if missing.
-- container_summary: combine all container counts and types into one string e.g. "2X40HC+1X20GP". If only one type, still format as e.g. "1X20GP".
+- paperless_code: exact 4-digit number from labels "PAPERLESS CODE", "PORT CODE", or inside parentheses like "(KERRY : 2816)" — extract only the number.
+- container_type: combine ALL container counts and types e.g. "1X40HC+1X20GP" or "2X40HC". null if LCL or no container.
 - null if not found."""
  
  
@@ -391,6 +390,8 @@ def render_table(df: pd.DataFrame, table_id: str = "main") -> None:
         v = row.get(key, None)
         if v is None or str(v).strip() in ("", "None", "nan", "NaN"):
             return None
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
         return str(v).strip()
  
     def badge(text, cls):
@@ -655,12 +656,6 @@ if page == "📤 Upload & Extract":
                     no_pallet      = ec11.number_input("No. Pallet",     min_value=0,
                                                         value=int(row_data.get("no_pallet") or 0))
 
-                    ec9b, _ = st.columns([2, 1])
-                    container_summary = ec9b.text_input(
-                        "Container Summary (สำหรับ SI — ถ้ามีหลายประเภท)",
-                        value=row_data.get("container_summary") or "",
-                        placeholder="เช่น 2X40HC+1X20GP",
-                    )
 
                     ec12, ec13 = st.columns(2)
                     cy_at          = ec12.text_input("CY At",            value=row_data.get("cy_at") or "")
@@ -695,7 +690,6 @@ if page == "📤 Upload & Extract":
                         "paperless_code":    paperless_code or None,
                         "no_container":      no_container or None,
                         "container_type":      container_type or None,
-                        "container_summary":   container_summary or None,
                         "no_pallet":           no_pallet or None,
                         "cy_at":             cy_at or None,
                         "return_place":      return_place or None,
@@ -908,11 +902,7 @@ null if not found."""
         safe_write("I13", carrier)
  
         # ── Container count label ───────────────────────────────
-        cont_summary = s(booking.get("container_summary"))
-        if not cont_summary:
-            cont_type    = s(booking.get("container_type")) or "40HC"
-            cont_summary = f"{len(containers)}X{cont_type}"
-        safe_write("B35", cont_summary)
+        safe_write("B35", s(booking.get("container_type")) or "")
  
         # ── I36/J36 = KGS. / CBM (หน่วยใต้ตัวเลข total) ───────
         safe_write("I36", "KGS.")
