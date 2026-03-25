@@ -182,7 +182,7 @@ Return ONLY a JSON object (no markdown, no explanation):
 }
  
 Rules:
-- booking_no: prefer Carrier Ref; fallback to Booking No. / Booking Ref.
+- booking_no: the carrier's booking number — look for labels "Booking No", "Carrier Booking No.", "Carrier Ref", "Carrier Booking Reference". Do NOT use B/L No., forwarder ref (e.g. FLXCB-), CONSOL, or tracking number.
 - country: use consignee's country if clearly stated in address; otherwise infer from Port of Discharge.
 - cy_at: depot for picking up empty container.
 - return_place: Laden Return / Return to location.
