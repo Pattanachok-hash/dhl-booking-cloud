@@ -925,7 +925,7 @@ null if not found."""
  
         MARK_START = 38
         ROWS_PER   = 5
-        MAX_INV    = 10
+        MAX_INV    = 100
  
         # ── helper: สีพื้นหลัง ──────────────────────────────────
         HIGHLIGHT_FILL = PatternFill(fill_type="solid", fgColor="BDD7EE")
@@ -1035,7 +1035,9 @@ null if not found."""
  
         # Shipping Marks ลง col A — แยกแต่ละบรรทัดลงคนละ row
         mark_row = MARK_START
-        for mark in marks[:MAX_INV]:
+        for i, mark in enumerate(marks[:MAX_INV]):
+            if i > 0:
+                mark_row += 1  # blank row between invoices
             for line in str(mark).split("\n"):
                 line = line.strip()
                 if line:
