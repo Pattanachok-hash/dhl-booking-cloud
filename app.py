@@ -182,10 +182,15 @@ Return ONLY a JSON object (no markdown, no explanation):
 }
  
 Rules:
-- booking_no: the carrier's booking number — look for labels "Booking No", "Carrier Booking No.", "Carrier Ref", "Carrier Booking Reference". Do NOT use B/L No., forwarder ref (e.g. FLXCB-), CONSOL, or tracking number.
+- booking_no: extract using this priority order:
+  1. Value next to labels "Carrier Booking No.", "Carrier Booking Reference", "Carrier Ref" — use that directly.
+  2. Value next to label "Booking No." or "Booking No" — BUT only if the value looks like an actual booking number (alphanumeric code). If the value is descriptive text (e.g. "LOAD ON SHIPPER NAME", "SEE ATTACHED", or any phrase that is clearly not a code), skip it.
+  3. Value next to "Ref No", "Ref No.", "Reference No." — use as fallback if steps 1 and 2 yield nothing.
+  4. Return null if nothing found.
+  Do NOT use B/L No., forwarder ref (e.g. FLXCB-), CONSOL, or tracking number.
 - country: use consignee's country if clearly stated in address; otherwise infer from Port of Discharge.
 - cy_at: depot for picking up empty container.
-- return_place: Laden Return / Return to location.
+- return_place: Laden Return / Return to location. For LCL shipments, use the value from "Stuffing at" or "Loading at" field instead.
 - paperless_code: exact 4-digit number from labels "PAPERLESS CODE", "PORT CODE", or inside parentheses like "(KERRY : 2816)" — extract only the number.
 - container_type: combine ALL container counts and types e.g. "1X40HC+1X20GP" or "2X40HC". null if LCL or no container.
 - null if not found."""
