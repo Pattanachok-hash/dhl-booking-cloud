@@ -181,13 +181,14 @@ Rules:
 - container_type: combine ALL container counts and types e.g. "1X40HC+1X20GP" or "2X40HC". For Maersk bookings: convert the Equipment table format — "40 DRY 9 6" = 40HC, "40 DRY" = 40GP, "20 DRY" = 20GP. null if LCL or no container.
 - Dates: dd/mm/yyyy. Cut-offs include hh:mm.
 - cy_date: Date the empty container is available for pick-up. For Maersk bookings: look at the Load Itinerary table (Page 2) → find the "Empty Container Depot" row → read its "Release Date" column. Convert YYYY-MM-DD to dd/mm/yyyy. For other carriers: use the empty pick-up date field.
-- return_date_1st: 1st Return Date / Turn-In Date / Gate-In Date. For Maersk bookings: calculate ETD minus 5 days and use that date.
+- return_date_1st: 1st Return Date / Turn-In Date / Gate-In Date. For Maersk bookings: calculate ETD minus 5 days and use that date. For MSC bookings: use the "First Receiving" date from the DRY row in the GATE-IN AT TERMINAL/DEPOT table.
 - liner_cutoff: Gate Closing / Closing Date / CY Cut-off / Last Load. For Maersk bookings: look at the Load Itinerary table (Page 2) → find the "Return Equip Delivery Terminal" row → read the location name → match EXACTLY to the cut-off on Page 1 using this mapping: "Lat Krabang" → "Cut-Off (DRY and REEF) Lat Krabang"; "TICT" → "Cut-Off TICT"; "Sahathai"/"SHCT" → "Cut-Off SHCT (Sahathai)"; "Laem Chabang" → "Cut-Off (DRY) Laem Chabang". The location name must match exactly — "Lat Krabang" is NOT the same as "TICT". Example: Return terminal = "Lat Krabang" → correct answer is "Cut-Off (DRY and REEF) Lat Krabang" = 05/04/2026 22:00, NOT Cut-Off TICT 06/04/2026 10:00. Ignore DG and REEF-only cutoffs.
 - si_cutoff: SI Cut-off / Doc Cut-off / Shipping Particular Cut-off. For Maersk bookings: use "SI (Transshipment & Intra-Asia)" or "SI (Direct)" line from Page 1.
 - vgm_cutoff: VGM line.
 - If a cut-off shows only a weekday (e.g. "THU"), calculate the actual date from the document date or ETD.
 - If ETA is given as a range (e.g. "19/May/2026 - 22/May/2026"), use the first date.
 - ETD must be earlier than ETA.
+- For MSC bookings: the "EST. TIME OF ARRIVAL/DEPARTURE" field shows two dates — use the SECOND date as ETD (the first date is vessel arrival at POL, the second is departure from POL).
 - null if not found."""
  
  
