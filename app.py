@@ -28,7 +28,8 @@ except Exception:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai_client     = genai.Client(api_key=GEMINI_KEY)
-GEMINI_MODEL     = "models/gemini-3.1-flash-lite-preview"
+GEMINI_MODEL_BOOKING = "models/gemini-2.5-flash"
+GEMINI_MODEL         = "models/gemini-3.1-flash-lite-preview"
 
 # ─────────────────────────────────────────
 # 2. PAGE CONFIG
@@ -139,38 +140,15 @@ COLUMNS_ORDER = [
     "paperless_code", "updated_at",
 ]
  
-PROMPT_DATES = """You are a DHL Logistics Analyst. Extract ONLY date/time fields from this booking PDF.
- 
-Return ONLY a JSON object (no markdown, no explanation):
-{
-  "liner_cutoff":    "dd/mm/yyyy hh:mm or null",
-  "vgm_cutoff":      "dd/mm/yyyy hh:mm or null",
-  "si_cutoff":       "dd/mm/yyyy hh:mm or null",
-  "return_date_1st": "dd/mm/yyyy or null",
-  "cy_date":         "dd/mm/yyyy or null",
-  "etd":             "dd/mm/yyyy or null",
-  "eta":             "dd/mm/yyyy or null"
-}
- 
-Rules:
-- Dates: dd/mm/yyyy. Cut-offs include hh:mm.
-- cy_date: Empty Pick-up date / date to collect empty container.
-- return_date_1st: 1st Return Date / Turn-In Date / Gate-In Date.
-- liner_cutoff: Gate Closing / Closing Date / CY Cut-off / Last Load.
-- si_cutoff: SI Cut-off / Doc Cut-off / Shipping Particular Cut-off.
-- If a cut-off shows only a weekday (e.g. "THU"), calculate the actual date from the document date or ETD.
-- ETD must be earlier than ETA.
-- null if not found."""
- 
-PROMPT_GENERAL = """You are a DHL Logistics Analyst. Extract ONLY general shipping info from this booking PDF.
- 
+PROMPT_BOOKING = """You are a DHL Logistics Analyst. Extract ALL shipping info from this booking PDF.
+
 Return ONLY a JSON object (no markdown, no explanation):
 {
   "booking_no":          "Carrier Ref or Booking No.",
   "fcl_or_lcl":          "FCL or LCL",
   "by_air_or_sea":       "Air or Sea",
   "country":             "destination country (NOT Thailand)",
-  "port_of_destination": "port name",
+  "port_of_destination": "final destination of the shipment",
   "liner_name":          "shipping line",
   "vessel_name":         "vessel/voyage (include connecting if any)",
   "no_container":        number or null,
@@ -178,9 +156,16 @@ Return ONLY a JSON object (no markdown, no explanation):
   "no_pallet":           number or null,
   "cy_at":               "empty pick-up depot",
   "return_place":        "laden return location",
-  "paperless_code":      "4-digit code from PAPERLESS CODE or PORT CODE label e.g. 2836, or null"
+  "paperless_code":      "4-digit code from PAPERLESS CODE or PORT CODE label e.g. 2836, or null",
+  "liner_cutoff":        "dd/mm/yyyy hh:mm or null",
+  "vgm_cutoff":          "dd/mm/yyyy hh:mm or null",
+  "si_cutoff":           "dd/mm/yyyy hh:mm or null",
+  "return_date_1st":     "dd/mm/yyyy or null",
+  "cy_date":             "dd/mm/yyyy or null",
+  "etd":                 "dd/mm/yyyy or null",
+  "eta":                 "dd/mm/yyyy or null"
 }
- 
+
 Rules:
 - booking_no: extract using this priority order:
   1. Value next to labels "Carrier Booking No.", "Carrier Booking Reference", "Carrier Ref" — use that directly.
@@ -188,57 +173,54 @@ Rules:
   3. Value next to "Ref No", "Ref No.", "Reference No." — use as fallback if steps 1 and 2 yield nothing.
   4. Return null if nothing found.
   Do NOT use B/L No., forwarder ref (e.g. FLXCB-), CONSOL, or tracking number.
-- country: use consignee's country if clearly stated in address; otherwise infer from Port of Discharge.
-- cy_at: depot for picking up empty container.
-- return_place: Laden Return / Return to location. For LCL shipments, use the value from "Stuffing at" or "Loading at" field instead.
-- paperless_code: exact 4-digit number from labels "PAPERLESS CODE", "PORT CODE", or inside parentheses like "(KERRY : 2816)" — extract only the number.
-- container_type: combine ALL container counts and types e.g. "1X40HC+1X20GP" or "2X40HC". null if LCL or no container.
+- port_of_destination: final destination of the shipment — use the "To:" field in the booking header, or the last stop in the Intended Transport Plan. Do NOT use intermediate sea ports or terminal names (e.g. "Guadalajara Castilla La Mancha, Spain" not "APM Terminal Valencia").
+- country: use consignee's country if clearly stated in address; otherwise infer from port_of_destination.
+- cy_at: depot for picking up empty container. For Maersk bookings: use the location name of the "Empty Container Depot" row from the Load Itinerary table (Page 2).
+- return_place: Laden Return / Return to location. For Maersk bookings: use the location name of the "Return Equip Delivery Terminal" row from the Load Itinerary table (Page 2). For LCL shipments, use the value from "Stuffing at" or "Loading at" field instead.
+- paperless_code: exact 4-digit number. For Maersk bookings: first find the "Return Equip Delivery Terminal" location from the Load Itinerary table (Page 2), then look up the matching 4-digit code from the "Paperless Code" line on Page 1 — e.g. if return terminal is "Lat Krabang" find the code next to "LKB" (e.g. "B1/LKB/TICT 2811" → 2811); if "Sahathai" or "SHCT" find the code next to "SHCT" (e.g. "SHCT 0520" → 0520); if "TICT" find the code next to "TICT". For other carriers: exact 4-digit number from labels "PAPERLESS CODE", "PORT CODE", or inside parentheses like "(KERRY : 2816)" — extract only the number. If the PAPERLESS CODE section lists multiple codes by terminal (e.g. Yang Ming format with lines like "JTC : EX. LCB KERRY TERMINAL = 2816"), look at the "Turn-In At" field to identify which terminal this booking uses, then find the matching 4-digit code from that terminal's entry in the PAPERLESS CODE section.
+- container_type: combine ALL container counts and types e.g. "1X40HC+1X20GP" or "2X40HC". For Maersk bookings: convert the Equipment table format — "40 DRY 9 6" = 40HC, "40 DRY" = 40GP, "20 DRY" = 20GP. null if LCL or no container.
+- Dates: dd/mm/yyyy. Cut-offs include hh:mm.
+- cy_date: Date the empty container is available for pick-up. For Maersk bookings: look at the Load Itinerary table (Page 2) → find the "Empty Container Depot" row → read its "Release Date" column. Convert YYYY-MM-DD to dd/mm/yyyy. For other carriers: use the empty pick-up date field.
+- return_date_1st: 1st Return Date / Turn-In Date / Gate-In Date. For Maersk bookings: calculate ETD minus 5 days and use that date.
+- liner_cutoff: Gate Closing / Closing Date / CY Cut-off / Last Load. For Maersk bookings: look at the Load Itinerary table (Page 2) → find the "Return Equip Delivery Terminal" row → read the location name → match EXACTLY to the cut-off on Page 1 using this mapping: "Lat Krabang" → "Cut-Off (DRY and REEF) Lat Krabang"; "TICT" → "Cut-Off TICT"; "Sahathai"/"SHCT" → "Cut-Off SHCT (Sahathai)"; "Laem Chabang" → "Cut-Off (DRY) Laem Chabang". The location name must match exactly — "Lat Krabang" is NOT the same as "TICT". Example: Return terminal = "Lat Krabang" → correct answer is "Cut-Off (DRY and REEF) Lat Krabang" = 05/04/2026 22:00, NOT Cut-Off TICT 06/04/2026 10:00. Ignore DG and REEF-only cutoffs.
+- si_cutoff: SI Cut-off / Doc Cut-off / Shipping Particular Cut-off. For Maersk bookings: use "SI (Transshipment & Intra-Asia)" or "SI (Direct)" line from Page 1.
+- vgm_cutoff: VGM line.
+- If a cut-off shows only a weekday (e.g. "THU"), calculate the actual date from the document date or ETD.
+- If ETA is given as a range (e.g. "19/May/2026 - 22/May/2026"), use the first date.
+- ETD must be earlier than ETA.
 - null if not found."""
  
  
 def extract_from_pdf(file_bytes: bytes) -> list[dict]:
-    """ส่ง PDF ให้ Gemini อ่าน 2 รอบ (dates + general) แล้ว merge"""
+    """ส่ง PDF ให้ Gemini อ่านครั้งเดียว (รวม dates + general)"""
     ai_config = types.GenerateContentConfig(
         response_mime_type="application/json",
         temperature=0.0,
         seed=42,
     )
- 
-    def call(prompt: str) -> dict:
-        res = genai_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_text(text=prompt),
-                        types.Part.from_bytes(
-                            data=file_bytes,
-                            mime_type="application/pdf",
-                        ),
-                    ],
-                )
-            ],
-            config=ai_config,
-        )
-        raw = res.text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
- 
-    dates   = call(PROMPT_DATES)
-    general = call(PROMPT_GENERAL)
- 
-    dates_list   = dates   if isinstance(dates,   list) else [dates]
-    general_list = general if isinstance(general, list) else [general]
- 
-    merged = []
-    for i, g in enumerate(general_list):
-        d = dates_list[i] if i < len(dates_list) else {}
-        merged.append({**g, **d})
-    return merged
+    res = genai_client.models.generate_content(
+        model=GEMINI_MODEL_BOOKING,
+        contents=[
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=PROMPT_BOOKING),
+                    types.Part.from_bytes(
+                        data=file_bytes,
+                        mime_type="application/pdf",
+                    ),
+                ],
+            )
+        ],
+        config=ai_config,
+    )
+    raw = res.text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    result = json.loads(raw.strip())
+    return result if isinstance(result, list) else [result]
  
  
 def save_to_supabase(data_list: list[dict]) -> bool:
@@ -532,36 +514,49 @@ if page == "📤 Upload & Extract":
         )
 
     # ── Auto-process when files are uploaded ─────────────────
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     list_icd   = files_icd   or []
     list_alpha = files_alpha or []
     total      = len(list_icd) + len(list_alpha)
 
     if total > 0:
-        all_data      = []
-        progress_bar  = st.progress(0)
-        processed     = 0
+        all_data     = []
+        progress_bar = st.progress(0)
+        status_text  = st.empty()
+        processed    = 0
 
-        for f in list_icd:
-            with st.spinner(f"กำลังสแกน (ICD): {f.name}"):
-                items = extract_from_pdf(f.read())
-                if items:
-                    for item in items:
-                        item["source_file"] = f.name
-                        item["loading_at"]  = "ICD"
-                    all_data.extend(items)
-            processed += 1
-            progress_bar.progress(processed / total)
+        # อ่าน bytes ทั้งหมดใน main thread ก่อน (UploadedFile ไม่ thread-safe)
+        tasks = (
+            [(f.name, f.read(), "ICD")   for f in list_icd] +
+            [(f.name, f.read(), "ALPHA") for f in list_alpha]
+        )
 
-        for f in list_alpha:
-            with st.spinner(f"กำลังสแกน (ALPHA): {f.name}"):
-                items = extract_from_pdf(f.read())
-                if items:
-                    for item in items:
-                        item["source_file"] = f.name
-                        item["loading_at"]  = "ALPHA"
+        def process_file(name, file_bytes, warehouse):
+            items = extract_from_pdf(file_bytes)
+            if items:
+                for item in items:
+                    item["source_file"] = name
+                    item["loading_at"]  = warehouse
+            return items or []
+
+        with ThreadPoolExecutor(max_workers=min(total, 5)) as executor:
+            futures = {
+                executor.submit(process_file, name, fb, wh): name
+                for name, fb, wh in tasks
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    items = future.result()
                     all_data.extend(items)
-            processed += 1
-            progress_bar.progress(processed / total)
+                except Exception as e:
+                    st.error(f"❌ {name}: {e}")
+                processed += 1
+                progress_bar.progress(processed / total)
+                status_text.caption(f"สแกนแล้ว {processed}/{total} ไฟล์ — {name}")
+
+        status_text.empty()
 
         if all_data:
             if save_to_supabase(all_data):
