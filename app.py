@@ -267,7 +267,7 @@ def bkk_time(df: pd.DataFrame, col: str) -> pd.DataFrame:
  
 def to_excel(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+    with pd.ExcelWriter(buf, engine="xlsxwriter", engine_kwargs={"options": {"nan_inf_to_errors": True}}) as writer:
         df.to_excel(writer, index=False, sheet_name="Bookings")
         wb  = writer.book
         ws  = writer.sheets["Bookings"]
