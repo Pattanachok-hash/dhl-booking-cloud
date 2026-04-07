@@ -654,8 +654,14 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
     from fpdf import FPDF
 
     from pathlib import Path
-    FONT_PATH    = "C:/Windows/Fonts/tahoma.ttf"
-    FONT_PATH_BD = "C:/Windows/Fonts/tahomabd.ttf"
+    _win   = Path("C:/Windows/Fonts")
+    _linux = Path("/usr/share/fonts/truetype/thai-tlwg")
+    if _win.exists():
+        FONT_PATH    = str(_win / "tahoma.ttf")
+        FONT_PATH_BD = str(_win / "tahomabd.ttf")
+    else:
+        FONT_PATH    = str(_linux / "TlwgTypo.ttf")
+        FONT_PATH_BD = str(_linux / "TlwgTypo-Bold.ttf")
     LOGO_PATH    = str(Path(__file__).parent / "Logo.png")
 
     class PDF(FPDF):
