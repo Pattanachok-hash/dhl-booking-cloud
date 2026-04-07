@@ -2289,7 +2289,8 @@ if page == "📊 Export Summary":
                 _pc1, _pc2 = st.columns(2)
                 prepared_name  = _pc1.selectbox("ชื่อผู้รับผิดชอบ", options=["— เลือก —"] + list(_PREPARED_BY), key="export_prepared_name")
                 prepared_phone = _PREPARED_BY.get(prepared_name, "")
-                _pc2.text_input("เบอร์โทรศัพท์", value=prepared_phone, disabled=True, key="export_prepared_phone")
+                _pc2.markdown("**เบอร์โทรศัพท์**")
+                _pc2.write(prepared_phone if prepared_phone else "—")
                 if prepared_name == "— เลือก —":
                     prepared_name = ""
 
