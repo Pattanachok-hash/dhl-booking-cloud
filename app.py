@@ -2278,9 +2278,20 @@ if page == "📊 Export Summary":
 
                 st.divider()
                 st.markdown("**ผู้รับผิดชอบ**")
+                _PREPARED_BY = {
+                    "Sutida Suwantatree":       "098-584-2550",
+                    "Nattawan Kerdpol":         "094-914-0449",
+                    "Alyssa Daenglang":         "095-363-0707",
+                    "Waraphon Praneetpolkrang": "062-396-4024",
+                    "Wannisa Seesuksam":        "066-109-7538",
+                    "Nisachol Pongmulee":       "083-110-3758",
+                }
                 _pc1, _pc2 = st.columns(2)
-                prepared_name  = _pc1.text_input("ชื่อผู้รับผิดชอบ", key="export_prepared_name",  placeholder="ชื่อ-นามสกุล")
-                prepared_phone = _pc2.text_input("เบอร์โทรศัพท์",   key="export_prepared_phone", placeholder="02-xxx-xxxx")
+                prepared_name  = _pc1.selectbox("ชื่อผู้รับผิดชอบ", options=["— เลือก —"] + list(_PREPARED_BY), key="export_prepared_name")
+                prepared_phone = _PREPARED_BY.get(prepared_name, "")
+                _pc2.text_input("เบอร์โทรศัพท์", value=prepared_phone, disabled=True, key="export_prepared_phone")
+                if prepared_name == "— เลือก —":
+                    prepared_name = ""
 
                 if st.button("📄 Generate PDF", use_container_width=True, disabled=(n_selected == 0)):
                     filtered = [all_records[i] for i, chk in enumerate(edited["เลือก"]) if chk]
