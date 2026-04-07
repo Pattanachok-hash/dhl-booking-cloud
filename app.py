@@ -654,14 +654,19 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
     from fpdf import FPDF
 
     from pathlib import Path
-    _win   = Path("C:/Windows/Fonts")
-    _linux = Path("/usr/share/fonts/truetype/thai-tlwg")
-    if _win.exists():
+    import tempfile, urllib.request
+    _win = Path("C:/Windows/Fonts")
+    if _win.exists() and (_win / "tahoma.ttf").exists():
         FONT_PATH    = str(_win / "tahoma.ttf")
         FONT_PATH_BD = str(_win / "tahomabd.ttf")
     else:
-        FONT_PATH    = str(_linux / "TlwgTypo.ttf")
-        FONT_PATH_BD = str(_linux / "TlwgTypo-Bold.ttf")
+        _tmp = Path(tempfile.gettempdir())
+        FONT_PATH    = str(_tmp / "NotoSansThai-Regular.ttf")
+        FONT_PATH_BD = str(_tmp / "NotoSansThai-Bold.ttf")
+        if not Path(FONT_PATH).exists():
+            urllib.request.urlretrieve("https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansThai/NotoSansThai-Regular.ttf", FONT_PATH)
+        if not Path(FONT_PATH_BD).exists():
+            urllib.request.urlretrieve("https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansThai/NotoSansThai-Bold.ttf", FONT_PATH_BD)
     LOGO_PATH    = str(Path(__file__).parent / "Logo.png")
 
     class PDF(FPDF):
