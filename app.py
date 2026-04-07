@@ -772,8 +772,10 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
                     pdf_obj.rect(x, y0, w, row_h, style="F")
                 # วาด border รอบ cell ด้วย rect
                 pdf_obj.rect(x, y0, w, row_h)
-                # วาด text ด้วย multi_cell โดยไม่มี border
-                pdf_obj.set_xy(x + 1, y0)
+                # วาด text ด้วย multi_cell โดยไม่มี border (center แนวตั้งเหมือน cell())
+                n_lines = _count_lines(pdf_obj, text, w)
+                v_offset = max(0, (row_h - n_lines * COV_LINE_H) / 2)
+                pdf_obj.set_xy(x + 1, y0 + v_offset)
                 pdf_obj.multi_cell(w - 2, COV_LINE_H, text, border=0, align=align,
                                    fill=False, new_x="RIGHT", new_y="TOP")
             else:
