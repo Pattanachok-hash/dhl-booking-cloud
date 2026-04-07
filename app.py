@@ -17,14 +17,20 @@ try:
     SUPABASE_URL  = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY  = st.secrets["SUPABASE_KEY"]
     GEMINI_KEY    = st.secrets["GENAI_API_KEY"]
-    TBL_BOOKINGS  = "bookings"
-    TBL_REVISIONS = "booking_revisions"
+    TBL_BOOKINGS          = "bookings"
+    TBL_REVISIONS         = "booking_revisions"
+    TBL_LOCAL_CHARGES     = "local_charges"
+    TBL_LOCAL_CHARGES_V2  = "local_charges_v2"
+    TBL_LOCAL_CHARGE_ITEMS = "local_charge_items"
 except Exception:
     # สำหรับใช้รันในเครื่องตัวเอง (Local) ถ้ายังไม่ได้ตั้งค่า Secrets
     st.error("❌ ไม่พบ API Keys ในระบบ Secrets กรุณาตั้งค่าที่ Settings > Secrets")
     st.stop()
-    TBL_BOOKINGS  = "test_bookings"
-    TBL_REVISIONS = "test_booking_revisions"
+    TBL_BOOKINGS           = "test_bookings"
+    TBL_REVISIONS          = "test_booking_revisions"
+    TBL_LOCAL_CHARGES      = "test_local_charges"
+    TBL_LOCAL_CHARGES_V2   = "test_local_charges_v2"
+    TBL_LOCAL_CHARGE_ITEMS = "test_local_charge_items"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai_client     = genai.Client(api_key=GEMINI_KEY)
@@ -60,6 +66,8 @@ st.markdown("""
     [data-testid="stTextInput"] > div:focus-within { border-color: #D4A900 !important; box-shadow: 0 0 0 3px rgba(255,204,0,0.2) !important; }
     [data-testid="stSelectbox"] > div > div { border: 2px solid #FFCC00 !important; border-radius: 10px !important; background-color: #fffef5 !important; }
     [data-testid="stSelectbox"] > div > div:focus-within { border-color: #D4A900 !important; box-shadow: 0 0 0 3px rgba(255,204,0,0.2) !important; }
+    [data-testid="stTextArea"] > div { border: 2px solid #FFCC00 !important; border-radius: 10px !important; background-color: #fffef5 !important; }
+    [data-testid="stTextArea"] > div:focus-within { border-color: #D4A900 !important; box-shadow: 0 0 0 3px rgba(255,204,0,0.2) !important; }
 </style>
 """, unsafe_allow_html=True)
  
@@ -190,8 +198,8 @@ Rules:
 - ETD must be earlier than ETA.
 - For MSC bookings: the "EST. TIME OF ARRIVAL/DEPARTURE" field shows two dates — use the SECOND date as ETD (the first date is vessel arrival at POL, the second is departure from POL).
 - null if not found."""
- 
- 
+
+
 def extract_from_pdf(file_bytes: bytes) -> list[dict]:
     """ส่ง PDF ให้ Gemini อ่านครั้งเดียว (รวม dates + general)"""
     ai_config = types.GenerateContentConfig(
@@ -469,13 +477,496 @@ def render_table(df: pd.DataFrame, table_id: str = "main") -> None:
  
  
 # ─────────────────────────────────────────
+# 5b. LOCAL CHARGES — PROMPT & FUNCTIONS
+# ─────────────────────────────────────────
+PROMPT_LOCAL_CHARGES = """You are a DHL Logistics Analyst. Extract local charge invoice data (in Thai Baht) from this PDF.
+
+Return ONLY a JSON object (no markdown, no explanation):
+{
+  "agent_invoice_no": <string or null>,
+  "pay_to":       <string or null>,
+  "tax_name":     <string or null>,
+  "tax_id":       <string or null>,
+  "delivery_port": <string or null>,
+  "etd":          <string DD/MM/YYYY or null>,
+  "bl_no":        <string or null>,
+  "due_date":     <string DD/MM/YYYY or null>,
+  "vat_applicable": <true or false>,
+  "items": [
+    {
+      "description": <string>,
+      "category":    <string>,
+      "wht_pct":     <0, 1, or 3>,
+      "rate":        <number or null>,
+      "qty":         <number or null>,
+      "total":       <number>
+    }
+  ]
+}
+
+Rules:
+- agent_invoice_no: invoice number issued by the freight forwarder/agent — look for:
+  1. Labels such as "Invoice No.", "Invoice Number", "INV No.", "Invoice #" near the top of the document
+  2. If no label found, look for a prominent alphanumeric code in the document title or heading (e.g. "INVOICE BKK003521Z" → extract "BKK003521Z")
+- pay_to: name of the freight forwarder or agent who issued this invoice — look for the company logo, letterhead, or "From" company at the top-right or bottom of the document.
+- tax_name: full name AND full address of the freight forwarder who issued this invoice, combined into one string. The issuer is the company whose logo/letterhead appears on the document — look for their address in the footer or "Service provider" section. For invoices with a Thai agent (e.g. "C/O" or "as agent for"), use the Thai local entity's name and address. NOT the "Invoice To" / "Customer" section at the top.
+- tax_id: tax identification number of the issuing freight forwarder — search in the footer, bottom of page, or near the issuer's company name/address. It may appear as "Tax ID", "TAX ID", "เลขประจำตัวผู้เสียภาษี", or an unlabeled number near the issuer's details. Do NOT use the tax ID from "Invoice To" / "Customer" / "Billed To" section at the top (that is the recipient's tax ID).
+- delivery_port: port of delivery or destination port — format as "Port Name, Country" e.g. "Mombasa, Kenya"
+- etd: estimated time of departure in DD/MM/YYYY format
+- due_date: payment due date — look for labels "Due Date", "Payment Due", "Due", "วันครบกำหนดชำระ". Format as DD/MM/YYYY. null if not found.
+- bl_no: Bill of Lading number — extract using this priority:
+  1. Kuehne+Nagel: use "KN TRACKING NO."
+  2. Others: "House Bill of Lading" or "House B/L" first
+  3. Fallback: "B/L No.", "Bill of Lading", or "OBL NO."
+  4. Never use "Master Bill of Lading" or "MB/L"
+- vat_applicable: true if invoice mentions "7% VAT", "VAT 7%", "7.00% PURSUANT TO SECTION 80 (2) OF TRC" or has a VAT line item. false otherwise.
+- items: list of ALL charge line items found in the invoice (exclude VAT and WHT rows — those are calculated by the system).
+  - description: exact charge name as shown in invoice
+  - category: classify this charge into one of these fixed values:
+      "thc_40hc"        → Terminal Handling Charge for 40HC container
+      "thc_40dv"        → Terminal Handling Charge for 40DV/40GP container
+      "thc_20gp"        → Terminal Handling Charge for 20GP container
+      "export_handling" → Export Handling / Handling Origin
+      "seal"            → Seal Fee
+      "bl_fee"          → B/L Fee / Bill of Lading Fee
+      "surrender_fee"   → Surrender Fee / Telex Release
+      "vgm_fee"         → VGM Fee / VGM Submission / VGM Coordination
+      "doc_amendment"   → Documentation Amendment / Doc Amendment
+      "detention"       → Detention
+      "demurrage"       → Demurrage
+      "container_repair"→ Container Repair
+      "edi_fee"         → EDI Fee / EDI Transmission
+      "late_gate"       → Late Gate / Late Gate Service
+      "environmental_fee" → Environmental Fee / Green Fee
+      "storage"           → Storage / Storage Fee / Container Storage
+      "freight_charge"    → Freight / Freight Charge / Ocean Freight / Air Freight / Sea Freight
+      "other"           → anything that does not match the above
+  - wht_pct: WHT rate for this item. Determine using this priority:
+    1. If the charge has a "(W/H 1%)" or "(W/H 3%)" label next to it → use that rate.
+    2. If there is a "WHT IN THB" column with entries like "1%=93.8" or "3%=30" next to the charge:
+       - Read the digit BEFORE the % sign as the wht_pct (e.g. "1%=93.8" → wht_pct=1, "3%=30" → wht_pct=3)
+       - The number AFTER "=" is the pre-calculated WHT amount — do NOT use it as the item total
+       - Item total must come from the CHARGES IN THB column
+       - IMPORTANT: If this column exists in the invoice, apply it to ALL items and do NOT use rule 5 (Expeditors) at all — even for SEAL, VGM, HANDLING
+    2b. If the table has a "W/T%" column with per-row values like "01" or "03" (e.g. Maritime Alliance format):
+       - Read the value for each row as wht_pct ("01" → 1, "03" → 3)
+       - This takes priority over rules 3–6. Do NOT use global remarks or issuer-based rules.
+    3. If there is no per-item label but the document has a global remark applying WHT to all charges (e.g. "Please deduct 3% withholding tax from total Service Charge", "หัก ณ ที่จ่าย 3%") → apply that rate to ALL items.
+    4. If the invoice contains "PLEASE PAY WITHOUT DEDUCTION" or "NO DEDUCTION" → wht_pct = 0 for ALL items. Do NOT apply rule 5 (Expeditors).
+    5. If the issuer is Expeditors and no WHT is stated in the invoice, apply based on description keywords:
+       - WHT 1%: description contains "THC" (any container type), "B/L", "BL FEE", "BILL OF LADING", or "SURRENDER"
+       - WHT 3%: description contains "SEAL", "HANDLING", or "VGM"
+       - WHT 0%: all other charges
+    5b. If the issuer is CEVA and no per-item WHT is stated → wht_pct = 3 for ALL items.
+    5c. If the issuer is DSV and no per-item WHT is stated, apply based on shipment_type context provided:
+       - Ocean Export:
+         WHT 3%: description is specifically "Export Handling", "Handling Fee", or "Handling Charge" (standalone handling service — NOT Terminal Handling Charge / THC)
+         WHT 1%: ALL other charges including THC (Terminal Handling Charge), B/L Fee, Surrender Fee, SEAL, VGM, Environmental Fee, Security Fee, EDI Fee, Late Gate, Detention, Demurrage, and any other non-handling charge
+       - Air Export / Air Import / Ocean Import:
+         WHT 0%: description contains "FREIGHT" or "OCEAN FREIGHT" or "AIR FREIGHT"
+         WHT 1%: description contains "TRANSPORT" or "TRUCKING" or "DELIVERY"
+         WHT 3%: ALL other charges (Export Handling, Handling Fee, SEAL, VGM, ENVIRONMENTAL, SECURITY, EDI, etc.)
+    6. Default: 0
+  - rate: unit rate in THB. If the invoice has a RATE column in foreign currency with an EXCH RATE column, convert: rate = RATE × EXCH RATE. If no rate is shown (flat fee), set rate = total.
+  - qty: number of units. If the invoice has an explicit QTY column, always use that value — even if the rate is in a foreign currency. If no quantity is shown (flat fee), set qty = 1.
+  - total: total amount for this line item (required)
+- Use numeric values only (no currency symbols, no commas). null if not found.
+"""
+
+
+def extract_local_charges(file_bytes: bytes, shipment_type: str = "") -> dict:
+    ai_config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.0,
+        seed=42,
+    )
+    prompt = PROMPT_LOCAL_CHARGES
+    if shipment_type:
+        prompt += f"\n\nContext: shipment_type = \"{shipment_type}\" (use this for DSV WHT rule 5b)"
+    res = genai_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=prompt),
+                    types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+                ],
+            )
+        ],
+        config=ai_config,
+    )
+    raw = res.text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    result = json.loads(raw.strip())
+
+    # Handle case where AI returns a list (multiple invoices in one PDF)
+    if isinstance(result, list):
+        result = result[0] if result else {}
+        result["_multi_invoice"] = True
+
+    items = result.get("items") or []
+
+    # Calculate VAT 7% in Python
+    if result.get("vat_applicable"):
+        subtotal = sum(float(it.get("total") or 0) for it in items)
+        if subtotal > 0:
+            result["vat_7"] = round(subtotal * 0.07, 2)
+
+    # Calculate WHT 1% and 3% from per-item wht_pct
+    wht1_sum = sum(float(it.get("total") or 0) for it in items if int(it.get("wht_pct") or 0) == 1)
+    wht3_sum = sum(float(it.get("total") or 0) for it in items if int(it.get("wht_pct") or 0) == 3)
+    result["wht_1"] = round(wht1_sum * 0.01, 2) if wht1_sum > 0 else None
+    result["wht_3"] = round(wht3_sum * 0.03, 2) if wht3_sum > 0 else None
+
+    return result
+
+
+def save_local_charge_v2(header: dict, items: list, pdf_bytes: bytes = None, filename: str = None) -> bool:
+    try:
+        # อัพโหลด invoice PDF ไปยัง Supabase Storage ก่อน
+        if pdf_bytes and filename:
+            import uuid as _uuid
+            path = f"{_uuid.uuid4()}_{filename}"
+            supabase.storage.from_("local-charge-invoices").upload(
+                path, pdf_bytes, {"content-type": "application/pdf"}
+            )
+            header["invoice_pdf_path"] = path
+        res = supabase.table(TBL_LOCAL_CHARGES_V2).insert(header).execute()
+        lc_id = res.data[0]["id"]
+        for item in items:
+            item["local_charge_id"] = lc_id
+        supabase.table(TBL_LOCAL_CHARGE_ITEMS).insert(items).execute()
+        return True
+    except Exception as e:
+        st.error(f"❌ Supabase Error: {e}")
+        return False
+
+
+# ─────────────────────────────────────────
+# 5c. EXPORT SUMMARY — PDF GENERATOR
+# ─────────────────────────────────────────
+def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by_phone: str = "") -> bytes:
+    """Generate expense summary PDF. records = list of {header, items}"""
+    from fpdf import FPDF
+
+    from pathlib import Path
+    FONT_PATH    = "C:/Windows/Fonts/tahoma.ttf"
+    FONT_PATH_BD = "C:/Windows/Fonts/tahomabd.ttf"
+    LOGO_PATH    = str(Path(__file__).parent / "Logo.png")
+
+    class PDF(FPDF):
+        def header(self):
+            # Logo top-left — h=14 วางที่ y=10
+            self.image(LOGO_PATH, x=10, y=10, h=14)
+            # Company info เริ่มที่ x=55 ให้พ้น logo
+            self.set_xy(55, 10)
+            self.set_font("Tahoma", "B", 9)
+            self.cell(0, 5, "DHL SUPPLY CHAIN (THAILAND)", new_x="LMARGIN", new_y="NEXT")
+            self.set_x(55)
+            self.set_font("Tahoma", "", 7.5)
+            self.cell(0, 4.5, "NO. 9 G TOWER GRAND RAMA 9 (NORTH WING), 26TH FLOOR AND 27TH FLOOR,", new_x="LMARGIN", new_y="NEXT")
+            self.set_x(55)
+            self.cell(0, 4.5, "RAMA IX RD, HUAI KHWANG, BANGKOK 10310  TEL. (02) 779 9800", new_x="LMARGIN", new_y="NEXT")
+            self.ln(5)
+            if self.page_no() > 1:
+                self.set_font("Tahoma", "B", 13)
+                self.cell(0, 8, "EXPENSE DETAIL", new_x="LMARGIN", new_y="NEXT", align="C")
+                self.ln(2)
+
+    pdf = PDF()
+    pdf.add_font("Tahoma",  "", FONT_PATH)
+    pdf.add_font("Tahoma",  "B", FONT_PATH_BD)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(10, 15, 10)
+
+    # column widths: 28+72+25+7+25+23 = 180mm
+    CW = {"inv": 28, "name": 72, "rate": 25, "x": 7, "qty": 25, "amt": 23}
+    COL_W  = 35
+    LABEL_W = CW["inv"] + CW["name"] + CW["rate"] + CW["x"] + CW["qty"]
+
+    def info_row(label, value, multiline=False):
+        pdf.set_font("Tahoma", "B", 9)
+        pdf.cell(COL_W, 6, label)
+        pdf.set_font("Tahoma", "", 9)
+        if multiline:
+            pdf.multi_cell(0, 6, str(value or ""), new_x="LMARGIN", new_y="NEXT")
+        else:
+            pdf.cell(0, 6, str(value or ""), new_x="LMARGIN", new_y="NEXT")
+
+    # Summary row colors matching sample PDF
+    COLOR = {
+        "amount": (255, 213, 128),   # amber
+        "vat":    (226, 239, 218),   # light green
+        "total":  (226, 239, 218),   # light green
+        "wht":    (255, 255, 153),   # light yellow
+        "net":    (189, 215, 238),   # light blue
+    }
+
+    def sum_row(label, value, color_key="amount"):
+        r, g, b = COLOR[color_key]
+        bold = color_key == "net"
+        pdf.set_font("Tahoma", "B" if bold else "", 8)
+        pdf.set_fill_color(r, g, b)
+        pdf.cell(LABEL_W, 6, label, border=1, fill=True, align="R")
+        pdf.cell(CW["amt"], 6, f"{value:,.2f}", border=1, fill=True, align="R", new_x="LMARGIN", new_y="NEXT")
+
+    # ── Cover Page ──────────────────────────────────────────
+    # total width = 40+28+24+32+20+20+21 = 185mm (fits A4 190mm printable)
+    CW_COV = {"part": 40, "inv": 28, "country": 24, "payto": 32, "due": 20, "remark": 20, "amt": 21}
+    COV_LINE_H = 5  # height per line in cover table
+
+    def _count_lines(pdf_obj, text, col_w):
+        """Count lines needed for text in a given column width."""
+        if not text:
+            return 1
+        words = str(text).split()
+        lines, line_w = 1, 0.0
+        for word in words:
+            ww = pdf_obj.get_string_width(word + " ")
+            if line_w + ww > col_w - 2 and line_w > 0:
+                lines += 1
+                line_w = ww
+            else:
+                line_w += ww
+        return lines
+
+    def _draw_cover_row(pdf_obj, cw, vals, aligns, fill=False, bold=False, fill_color=None):
+        """Draw one row with auto row-height and word-wrap for part/payto/remark."""
+        WRAP_KEYS = {"part", "payto", "remark"}
+        if fill_color:
+            pdf_obj.set_fill_color(*fill_color)
+        pdf_obj.set_font("Tahoma", "B" if bold else "", 7.5)
+
+        # Calculate row height
+        max_lines = 1
+        for key in WRAP_KEYS:
+            if key in cw:
+                max_lines = max(max_lines, _count_lines(pdf_obj, vals.get(key, ""), cw[key]))
+        row_h = max_lines * COV_LINE_H
+
+        x0, y0 = pdf_obj.get_x(), pdf_obj.get_y()
+        x = x0
+        for key, w in cw.items():
+            text = str(vals.get(key) or "")
+            align = aligns.get(key, "L")
+            pdf_obj.set_xy(x, y0)
+            if key in WRAP_KEYS:
+                # วาด background fill ก่อน (ถ้ามี)
+                if fill and fill_color:
+                    pdf_obj.set_fill_color(*fill_color)
+                    pdf_obj.rect(x, y0, w, row_h, style="F")
+                # วาด border รอบ cell ด้วย rect
+                pdf_obj.rect(x, y0, w, row_h)
+                # วาด text ด้วย multi_cell โดยไม่มี border
+                pdf_obj.set_xy(x + 1, y0)
+                pdf_obj.multi_cell(w - 2, COV_LINE_H, text, border=0, align=align,
+                                   fill=False, new_x="RIGHT", new_y="TOP")
+            else:
+                pdf_obj.cell(w, row_h, text, border=1, align=align, fill=fill)
+            x += w
+        pdf_obj.set_xy(x0, y0 + row_h)
+
+    COV_ALIGNS = {"part": "L", "inv": "C", "country": "C", "payto": "L", "due": "C", "remark": "L", "amt": "R"}
+
+    pdf.add_page()
+    pdf.set_font("Tahoma", "B", 14)
+    pdf.cell(0, 8, "ใบแจ้งค่าใช้จ่ายส่งออก", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_font("Tahoma", "B", 12)
+    pdf.cell(0, 7, "EXPORT EXPENSE DETAIL", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(6)
+
+    today_cover = datetime.now(pytz.timezone("Asia/Bangkok")).strftime("%d/%m/%Y")
+    pdf.set_font("Tahoma", "", 9)
+    pdf.cell(0, 6, f"Date : {today_cover}", new_x="LMARGIN", new_y="NEXT", align="R")
+    pdf.ln(4)
+
+    # Cover table header
+    pdf.set_fill_color(220, 220, 220)
+    pdf.set_font("Tahoma", "B", 7.5)
+    hdr_vals = {"part": "รายการ / PARTICULARS", "inv": "INVOICE NO.", "country": "Country",
+                "payto": "Pay To", "due": "Due Date", "remark": "Remark", "amt": "Amount"}
+    _draw_cover_row(pdf, CW_COV, hdr_vals, {k: "C" for k in CW_COV}, fill=True, bold=True, fill_color=(220, 220, 220))
+
+    cover_total = 0.0
+    for rec in records:
+        hdr  = rec["header"]
+        bk   = rec.get("bk") or {}
+        its  = rec["items"]
+        subtotal = sum(float(it.get("total") or 0) for it in its)
+        vat_7 = float(hdr.get("vat_7") or 0)
+        wht_1 = float(hdr.get("wht_1") or 0)
+        wht_3 = float(hdr.get("wht_3") or 0)
+        net   = round(subtotal + vat_7 - wht_1 - wht_3, 2)
+        cover_total += net
+
+        cats = sorted(set(it.get("category") or "other" for it in its))
+        default_part = "+ ".join(c.upper().replace("_", "") for c in cats)
+        cat_label = rec.get("cover_part") or default_part
+
+        row_vals = {
+            "part":    cat_label,
+            "inv":     rec.get("cover_inv")     or hdr.get("ctc_invoice_no") or "-",
+            "country": rec.get("cover_country") or bk.get("country") or "-",
+            "payto":   rec.get("cover_payto")   or hdr.get("pay_to") or "-",
+            "due":     rec.get("cover_due")     or hdr.get("due_date") or "-",
+            "remark":  rec.get("cover_remark")  or hdr.get("remark") or "",
+            "amt":     f"{net:,.2f}",
+        }
+        _draw_cover_row(pdf, CW_COV, row_vals, COV_ALIGNS)
+
+    # Total row
+    total_label_w = sum(CW_COV[k] for k in ["part", "inv", "country", "payto", "due", "remark"])
+    pdf.set_font("Tahoma", "B", 8)
+    pdf.set_fill_color(189, 215, 238)
+    pdf.cell(total_label_w, COV_LINE_H, "Total", border=1, fill=True, align="R")
+    pdf.cell(CW_COV["amt"], COV_LINE_H, f"{cover_total:,.2f}", border=1, fill=True, align="R", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(6)
+    pdf.set_font("Tahoma", "", 9)
+    pdf.ln(10)
+    name_line = f"Prepared by : {prepared_by}" if prepared_by else "Prepared by ............................................"
+    pdf.cell(80, 6, name_line)
+    pdf.cell(80, 6, "Approved by ............................................", new_x="LMARGIN", new_y="NEXT")
+    if prepared_by_phone:
+        pdf.ln(2)
+        pdf.set_font("Tahoma", "", 8)
+        pdf.cell(80, 5, f"Tel. : {prepared_by_phone}")
+
+    # ── Detail pages ────────────────────────────────────────
+    for rec in records:
+        hdr   = rec["header"]
+        items = rec["items"]
+
+        pdf.add_page()
+
+        # ── Header info ──
+        today_str = datetime.now(pytz.timezone("Asia/Bangkok")).strftime("%d/%m/%Y")
+
+        # DATE: วางที่ขวาบนแบบ absolute (y=10 ระดับเดียวกับ logo/company info)
+        y_after_header = pdf.get_y()
+        pdf.set_xy(142, 10)
+        pdf.set_font("Tahoma", "B", 9)
+        pdf.cell(28, 5, "DATE :", align="R")
+        pdf.set_font("Tahoma", "", 9)
+        pdf.cell(30, 5, today_str, align="R")
+        pdf.set_xy(10, y_after_header)
+
+        # SHIPPER row (ไม่มี DATE แล้ว)
+        pdf.set_font("Tahoma", "B", 9)
+        pdf.cell(COL_W, 6, "SHIPPER :")
+        pdf.set_font("Tahoma", "", 9)
+        pdf.cell(0, 6, "CARRIER AIR CONDITIONING (THAILAND) CO.,LTD.", new_x="LMARGIN", new_y="NEXT")
+        info_row("PAY TO :", hdr.get("pay_to") or "")
+        info_row("TAX NAME :", hdr.get("tax_name") or "", multiline=True)
+        pdf.ln(2)
+        info_row("TAX ID NO. :", hdr.get("tax_id") or "")
+        info_row("DELIVERY PORT :", hdr.get("delivery_port") or "")
+        info_row("ETD :", hdr.get("etd") or "")
+        info_row("BL NO :", hdr.get("bl_no") or "")
+        info_row("BOOKING NO. :", hdr.get("booking_no") or "")
+        pdf.ln(3)
+
+        # ── Table header ──
+        pdf.set_fill_color(220, 220, 220)
+        pdf.set_font("Tahoma", "B", 8)
+        pdf.cell(CW["inv"],  7, "INVOICE NO.", border=1, fill=True, align="C")
+        pdf.cell(CW["name"], 7, "DESCRIPTION", border=1, fill=True, align="C")
+        pdf.cell(CW["rate"], 7, "RATE",        border=1, fill=True, align="C")
+        pdf.cell(CW["x"],    7, "x",           border=1, fill=True, align="C")
+        pdf.cell(CW["qty"],  7, "QUANTITY",    border=1, fill=True, align="C")
+        pdf.cell(CW["amt"],  7, "AMOUNT",      border=1, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
+
+        # ── Table rows ──
+        invoice_no = hdr.get("ctc_invoice_no") or ""
+        subtotal = 0.0
+        pdf.set_font("Tahoma", "", 8)
+        _CAT_ORDER = [
+            "thc_40hc","thc_40dv","thc_20gp","export_handling","seal","bl_fee",
+            "surrender_fee","vgm_fee","doc_amendment","detention","demurrage",
+            "container_repair","edi_fee","late_gate","environmental_fee",
+            "storage","freight_charge","other",
+        ]
+        items = sorted(items, key=lambda x: _CAT_ORDER.index(x.get("category") or "other")
+                       if (x.get("category") or "other") in _CAT_ORDER else len(_CAT_ORDER))
+        for it in items:
+            desc      = it.get("description") or ""
+            rate      = float(it.get("rate") or 0)
+            qty       = float(it.get("qty") or 0)
+            total     = float(it.get("total") or 0)
+            subtotal += total
+
+            rate_str  = f"{rate:,.2f}" if rate else ""
+            qty_str   = f"{qty:,.3f}" if qty else ""
+            total_str = f"{total:,.2f}" if total else "-"
+
+            pdf.cell(CW["inv"],  6, invoice_no, border=1, align="C")
+            pdf.cell(CW["name"], 6, desc[:45],  border=1)
+            pdf.cell(CW["rate"], 6, rate_str,   border=1, align="R")
+            pdf.cell(CW["x"],    6, "x",        border=1, align="C")
+            pdf.cell(CW["qty"],  6, qty_str,    border=1, align="R")
+            pdf.cell(CW["amt"],  6, total_str,  border=1, align="R", new_x="LMARGIN", new_y="NEXT")
+            invoice_no = ""  # show only on first row
+
+        # ── Summary rows ──
+        vat_7     = float(hdr.get("vat_7")  or 0)
+        wht_1     = float(hdr.get("wht_1")  or 0)
+        wht_3     = float(hdr.get("wht_3")  or 0)
+        total_net = subtotal + vat_7 - wht_1 - wht_3
+
+        sum_row("Amount",              subtotal,          color_key="amount")
+        sum_row("บวก vat 7%",          vat_7,             color_key="vat")
+        sum_row("Total",               subtotal + vat_7,  color_key="total")
+        sum_row("หัก ภาษี ณ ที่จ่าย 1%", wht_1,          color_key="wht")
+        sum_row("หัก ภาษี ณ ที่จ่าย 3%", wht_3,          color_key="wht")
+        sum_row("ยอดจ่ายจริง",         total_net,         color_key="net")
+
+    summary_bytes = bytes(pdf.output())
+
+    # ── Merge invoice PDFs ก่อน summary ของแต่ละ invoice ──
+    try:
+        from pypdf import PdfWriter, PdfReader
+        import io as _io
+
+        writer = PdfWriter()
+
+        # page 0 = cover page, detail pages เริ่มที่ index 1
+        sum_reader = PdfReader(_io.BytesIO(summary_bytes))
+        writer.add_page(sum_reader.pages[0])  # cover page
+
+        for i, rec in enumerate(records):
+            # detail page อยู่ที่ index i+1 (เพราะ page 0 = cover)
+            writer.add_page(sum_reader.pages[i + 1])
+            # แทรก invoice PDF ต่อท้าย (ถ้ามี)
+            inv_path = rec["header"].get("invoice_pdf_path")
+            if inv_path:
+                try:
+                    inv_bytes = supabase.storage.from_("local-charge-invoices").download(inv_path)
+                    inv_reader = PdfReader(_io.BytesIO(inv_bytes))
+                    for page in inv_reader.pages:
+                        writer.add_page(page)
+                except Exception:
+                    pass  # ถ้าดาวน์โหลดไม่ได้ ข้ามไป
+
+        out = _io.BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception:
+        # fallback: return summary only
+        return summary_bytes
+
+
+# ─────────────────────────────────────────
 # 6. SIDEBAR NAVIGATION
 # ─────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 🚚 DHL Logistics Menu")
     page = st.radio(
         "เลือกเมนู",
-        ["📤 Upload & Extract", "📄 Generate SI (Draft)"],
+        ["📤 Upload & Extract", "📄 Generate SI (Draft)", "💰 Local Charges", "📊 Export Summary"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -1331,3 +1822,477 @@ null if not found."""
                 except Exception as e:
                     st.error(f"❌ Generate Error: {e}")
                     import traceback; st.code(traceback.format_exc())
+
+# ─────────────────────────────────────────
+# 9. PAGE: LOCAL CHARGES
+# ─────────────────────────────────────────
+if page == "💰 Local Charges":
+
+    st.subheader("💰 Local Charges")
+
+    st.markdown("""
+    <style>
+    button[data-testid="stNumberInputStepUp"],
+    button[data-testid="stNumberInputStepDown"] { display: none; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Booking No. dropdown ──────────────
+    try:
+        bk_res = supabase.table(TBL_BOOKINGS).select("booking_no").order("updated_at", desc=True).execute()
+        bk_options = [r["booking_no"] for r in bk_res.data if r.get("booking_no")]
+    except Exception:
+        bk_options = []
+
+    selected_booking_no = st.selectbox(
+        "Booking No. *",
+        options=["— เลือก Booking —"] + bk_options,
+    )
+    booking_selected = selected_booking_no != "— เลือก Booking —"
+    if not booking_selected:
+        st.warning("⚠️ กรุณาเลือก Booking No. ก่อนอัปโหลดไฟล์")
+
+    # ── Fetch shipment type for DSV WHT rule ──
+    shipment_type = ""
+    if booking_selected:
+        try:
+            bk_detail = supabase.table(TBL_BOOKINGS).select("by_air_or_sea, fcl_or_lcl").eq("booking_no", selected_booking_no).limit(1).execute()
+            if bk_detail.data:
+                b = bk_detail.data[0]
+                air_sea = (b.get("by_air_or_sea") or "").strip().lower()
+                fcl_lcl = (b.get("fcl_or_lcl") or "").strip().lower()
+                if air_sea == "air":
+                    shipment_type = "Air Export"
+                elif fcl_lcl == "lcl":
+                    shipment_type = "Ocean Export"
+                else:
+                    shipment_type = "Ocean Export"
+        except Exception:
+            pass
+
+    # ── Upload zone ──────────────────────
+    if "lc_uploader_key" not in st.session_state:
+        st.session_state["lc_uploader_key"] = 0
+
+    lc_file = st.file_uploader(
+        "โยนไฟล์ Local Charge PDF ที่นี่",
+        type="pdf",
+        accept_multiple_files=False,
+        key=f"lc_{st.session_state['lc_uploader_key']}",
+        disabled=not booking_selected,
+    )
+
+    if lc_file and booking_selected:
+        cache_key = f"lc_data_{lc_file.name}_{lc_file.size}"
+        if cache_key not in st.session_state:
+            with st.spinner(f"กำลังสแกน: {lc_file.name}"):
+                try:
+                    st.session_state[cache_key] = extract_local_charges(lc_file.read(), shipment_type=shipment_type)
+                except Exception as e:
+                    st.error(f"❌ AI Error: {e}")
+                    st.session_state[cache_key] = None
+
+        data = st.session_state[cache_key]
+
+        if data:
+            if data.get("_multi_invoice"):
+                st.warning("⚠️ ตรวจพบหลาย invoice ในไฟล์เดียวกัน — แสดงเฉพาะ invoice แรก กรุณาอัพโหลดทีละ invoice")
+            st.success("✅ Extract สำเร็จ — ตรวจสอบข้อมูลก่อนบันทึก")
+
+            # ── Header fields ─────────────────────────────────────
+            st.markdown("**ข้อมูลทั่วไป**")
+            r1c1, r1c2, r1c3 = st.columns(3)
+            hdr_agent_invoice_no = r1c1.text_input("Agent Invoice No.", value=str(data.get("agent_invoice_no") or ""), key="lc_agent_invoice_no")
+            hdr_pay_to           = r1c2.text_input("Pay To",            value=str(data.get("pay_to")        or ""), key="lc_pay_to")
+            hdr_tax_id           = r1c3.text_input("Tax ID No.",        value=str(data.get("tax_id")        or ""), key="lc_tax_id")
+
+            r2c1, r2c2, r2c3 = st.columns(3)
+            hdr_tax_name      = r2c1.text_area("Tax Name & Address", value=str(data.get("tax_name")      or ""), height=80, key="lc_tax_name")
+            hdr_delivery_port = r2c2.text_input("Delivery Port",     value=str(data.get("delivery_port") or ""), key="lc_delivery_port")
+            hdr_etd           = r2c3.text_input("ETD (DD/MM/YYYY)",  value=str(data.get("etd")           or ""), key="lc_etd")
+
+            r3c1, r3c2, r3c3 = st.columns(3)
+            hdr_bl_no         = r3c1.text_input("B/L No.",         value=str(data.get("bl_no") or ""), key="lc_bl_no")
+            hdr_ctc_invoice_no = r3c2.text_input("CTC Invoice No.", value="", key="lc_ctc_invoice_no")
+            hdr_remark        = r3c3.text_input("Remark",           value="", key="lc_remark")
+
+            r4c1, r4c2, r4c3 = st.columns(3)
+            hdr_due_date      = r4c1.text_input("Due Date (DD/MM/YYYY)", value=str(data.get("due_date") or ""), key="lc_due_date")
+
+            # ── Dynamic items ─────────────────────────────────────
+            st.markdown("**ค่าใช้จ่าย (บาท)**")
+
+            CATEGORY_ORDER = [
+                "thc_40hc", "thc_40dv", "thc_20gp",
+                "export_handling", "seal", "bl_fee", "surrender_fee", "vgm_fee",
+                "doc_amendment", "detention", "demurrage", "container_repair",
+                "edi_fee", "late_gate", "environmental_fee", "storage", "freight_charge", "other",
+            ]
+            CATEGORY_LABEL = {
+                "thc_40hc":          "THC (40HC)",
+                "thc_40dv":          "THC (40DV)",
+                "thc_20gp":          "THC (20GP)",
+                "export_handling":   "Export Handling",
+                "seal":              "Seal",
+                "bl_fee":            "B/L Fee",
+                "surrender_fee":     "Surrender Fee",
+                "vgm_fee":           "VGM Coordination Fee",
+                "doc_amendment":     "Documentation Amendment Charge",
+                "detention":         "Detention",
+                "demurrage":         "Demurrage",
+                "container_repair":  "Container Repair",
+                "edi_fee":           "EDI Fee",
+                "late_gate":         "Late Gate Service",
+                "environmental_fee": "Environmental Fee",
+                "storage":           "Storage",
+                "freight_charge":    "Freight Charge",
+                "other":             None,  # keep original description
+            }
+
+            if "lc_items" not in st.session_state or st.session_state.get("lc_items_source") != cache_key:
+                raw_items = [
+                    {"description": it.get("description", ""), "category": it.get("category") or "other",
+                     "wht_pct": int(it.get("wht_pct") or 0),
+                     "rate": float(it.get("rate") or 0), "qty": float(it.get("qty") or 0),
+                     "total": float(it.get("total") or 0)}
+                    for it in (data.get("items") or [])
+                ]
+                # Replace description with standard label (keep original for "other")
+                for it in raw_items:
+                    cat = it["category"]
+                    label = CATEGORY_LABEL.get(cat)
+                    if label:
+                        it["description"] = label
+                # Sort by category order
+                raw_items.sort(key=lambda x: CATEGORY_ORDER.index(x["category"]) if x["category"] in CATEGORY_ORDER else 99)
+                st.session_state["lc_items"] = raw_items
+                st.session_state["lc_items_source"] = cache_key
+
+            hc1, hc2, hc3, hc4, hc5, hc6 = st.columns([3, 1, 2, 2, 2, 1])
+            hc1.markdown("**รายการ**"); hc2.markdown("**WHT %**")
+            hc3.markdown("**Rate**"); hc4.markdown("**No.Unit**")
+            hc5.markdown("**Total**"); hc6.markdown("")
+
+            items_to_delete = []
+            for idx, item in enumerate(st.session_state["lc_items"]):
+                c1, c2, c3, c4, c5, c6 = st.columns([3, 1, 2, 2, 2, 1])
+                item["description"] = c1.text_input("_", value=item["description"], label_visibility="collapsed", key=f"lc_desc_{idx}")
+                item["wht_pct"]     = int(c2.number_input("_", value=int(item["wht_pct"]), min_value=0, max_value=3, step=1, label_visibility="collapsed", key=f"lc_wht_{idx}"))
+                item["rate"]        = c3.number_input("_", value=item["rate"], min_value=0.0, step=0.01, format="%.2f", label_visibility="collapsed", key=f"lc_rate_{idx}")
+                item["qty"]         = c4.number_input("_", value=item["qty"],  min_value=0.0, step=0.01, format="%.2f", label_visibility="collapsed", key=f"lc_qty_{idx}")
+                item["total"]       = c5.number_input("_", value=item["total"], min_value=0.0, step=0.01, format="%.2f", label_visibility="collapsed", key=f"lc_total_{idx}")
+                if c6.button("🗑️", key=f"lc_del_{idx}"):
+                    items_to_delete.append(idx)
+
+            for idx in reversed(items_to_delete):
+                st.session_state["lc_items"].pop(idx)
+                st.rerun()
+
+            if st.button("➕ เพิ่มรายการ", key="lc_add"):
+                st.session_state["lc_items"].append({"description": "", "category": "other", "wht_pct": 0, "rate": 0.0, "qty": 0.0, "total": 0.0})
+                st.rerun()
+
+            # ── Live summary ──────────────────────────────────────
+            current_items = st.session_state["lc_items"]
+            charges_subtotal = sum(float(it.get("total") or 0) for it in current_items)
+            wht1_sum = sum(float(it.get("total") or 0) for it in current_items if int(it.get("wht_pct") or 0) == 1)
+            wht3_sum = sum(float(it.get("total") or 0) for it in current_items if int(it.get("wht_pct") or 0) == 3)
+            calc_wht1 = round(wht1_sum * 0.01, 2)
+            calc_wht3 = round(wht3_sum * 0.03, 2)
+
+            st.divider()
+            sub1, _, _, _, sub5, _ = st.columns([3, 1, 2, 2, 2, 1])
+            sub1.markdown("<div style='padding-top:8px'>**รวมค่าใช้จ่าย**</div>", unsafe_allow_html=True)
+            sub5.markdown(f"<div style='padding-top:8px; text-align:right'><b>{charges_subtotal:,.2f}</b></div>", unsafe_allow_html=True)
+
+            st.markdown("**สรุป**")
+            sc1, _, _, _, sc5, _ = st.columns([3, 1, 2, 2, 2, 1])
+            sc1.markdown("<div style='padding-top:8px'>VAT 7%</div>", unsafe_allow_html=True)
+            vat_7 = sc5.number_input("_", value=float(data.get("vat_7") or 0), min_value=0.0, step=0.01, format="%.2f", label_visibility="collapsed", key="vat_7")
+
+            after_vat = charges_subtotal + vat_7
+            av1, _, _, _, av5, _ = st.columns([3, 1, 2, 2, 2, 1])
+            av1.markdown("<div style='padding-top:8px'>**รวมหลัง VAT**</div>", unsafe_allow_html=True)
+            av5.markdown(f"<div style='padding-top:8px; text-align:right'><b>{after_vat:,.2f}</b></div>", unsafe_allow_html=True)
+
+            wc1, _, _, _, wc5, _ = st.columns([3, 1, 2, 2, 2, 1])
+            wc1.markdown("<div style='padding-top:8px'>WHT 1%</div>", unsafe_allow_html=True)
+            wc5.markdown(f"<div style='padding-top:8px; text-align:right'>{calc_wht1:,.2f}</div>", unsafe_allow_html=True)
+
+            w3c1, _, _, _, w3c5, _ = st.columns([3, 1, 2, 2, 2, 1])
+            w3c1.markdown("<div style='padding-top:8px'>WHT 3%</div>", unsafe_allow_html=True)
+            w3c5.markdown(f"<div style='padding-top:8px; text-align:right'>{calc_wht3:,.2f}</div>", unsafe_allow_html=True)
+
+            after_wht = round(after_vat - calc_wht1 - calc_wht3, 2)
+            aw1, _, _, _, aw5, _ = st.columns([3, 1, 2, 2, 2, 1])
+            aw1.markdown("<div style='padding-top:8px'>**รวมหลังหัก WHT**</div>", unsafe_allow_html=True)
+            aw5.markdown(f"<div style='padding-top:8px; text-align:right'><b>{after_wht:,.2f}</b></div>", unsafe_allow_html=True)
+
+            # ── Save ──────────────────────────────────────────────
+            if st.button("💾 บันทึก", use_container_width=True, key="lc_save"):
+                header = {
+                    "agent_invoice_no": hdr_agent_invoice_no or None,
+                    "pay_to":        hdr_pay_to or None,
+                    "tax_name":      hdr_tax_name or None,
+                    "tax_id":        hdr_tax_id or None,
+                    "delivery_port": hdr_delivery_port or None,
+                    "etd":           hdr_etd or None,
+                    "bl_no":         hdr_bl_no or None,
+                    "due_date":      hdr_due_date or None,
+                    "vat_7":         vat_7 if vat_7 else None,
+                    "wht_1":         calc_wht1 if calc_wht1 else None,
+                    "wht_3":         calc_wht3 if calc_wht3 else None,
+                    "subtotal":      charges_subtotal if charges_subtotal else None,
+                    "total":         after_wht if after_wht else None,
+                    "source_file":   lc_file.name,
+                    "booking_no":    selected_booking_no if selected_booking_no != "— เลือก Booking —" else None,
+                    "ctc_invoice_no": hdr_ctc_invoice_no or None,
+                    "remark":        hdr_remark or None,
+                }
+                save_items = [
+                    {"description": it["description"], "category": it.get("category") or "other",
+                     "wht_pct": it["wht_pct"],
+                     "rate": it["rate"] or None, "qty": it["qty"] or None,
+                     "total": it["total"] or None}
+                    for it in current_items if it.get("description")
+                ]
+                if save_local_charge_v2(header, save_items, pdf_bytes=lc_file.getvalue(), filename=lc_file.name):
+                    st.success("✅ บันทึกเรียบร้อยแล้ว")
+                    del st.session_state["lc_items"]
+                    del st.session_state["lc_items_source"]
+                    st.session_state["lc_uploader_key"] += 1
+                    st.rerun()
+
+    # ── History table ────────────────────
+    st.divider()
+    st.subheader("📊 รายการ Local Charges ทั้งหมด")
+    try:
+        lc_res = (
+            supabase.table(TBL_LOCAL_CHARGES_V2)
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        if lc_res.data:
+            df_lc = pd.DataFrame(lc_res.data)
+            df_lc = bkk_time(df_lc, "created_at")
+            st.dataframe(df_lc, use_container_width=True)
+
+            st.markdown("**ลบรายการ**")
+            delete_options = {
+                f"{r.get('agent_invoice_no') or r.get('ctc_invoice_no') or '-'} | {r.get('booking_no') or '-'} | {r.get('pay_to') or '-'} | {r.get('etd') or '-'}": r["id"]
+                for r in lc_res.data
+            }
+            selected_label = st.selectbox("เลือกรายการที่ต้องการลบ", options=["— เลือก —"] + list(delete_options.keys()), key="lc_delete_select")
+            if selected_label != "— เลือก —":
+                if st.button("🗑️ ลบรายการนี้", type="primary", key="lc_delete_btn"):
+                    del_id = delete_options[selected_label]
+                    try:
+                        supabase.table(TBL_LOCAL_CHARGE_ITEMS).delete().eq("local_charge_id", del_id).execute()
+                        supabase.table(TBL_LOCAL_CHARGES_V2).delete().eq("id", del_id).execute()
+                        st.success("✅ ลบเรียบร้อยแล้ว")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ ลบไม่สำเร็จ: {e}")
+        else:
+            st.info("ยังไม่มีข้อมูล")
+    except Exception as e:
+        st.error(f"❌ Load Error: {e}")
+
+# ─────────────────────────────────────────
+# 10. PAGE: EXPORT SUMMARY
+# ─────────────────────────────────────────
+if page == "📊 Export Summary":
+    st.subheader("📊 Export Summary")
+
+    # ── Load all booking numbers that have local charges ──
+    try:
+        from collections import defaultdict
+        lc_res = supabase.table(TBL_LOCAL_CHARGES_V2).select("id,booking_no,ctc_invoice_no,exported_at").execute()
+        bno_rows = defaultdict(list)
+        for r in lc_res.data:
+            if r.get("booking_no"):
+                bno_rows[r["booking_no"]].append(r)
+    except Exception as e:
+        st.error(f"❌ Load Error: {e}")
+        bno_rows = {}
+
+    if not bno_rows:
+        st.info("ยังไม่มีข้อมูล Local Charges ในระบบ")
+    else:
+        def _make_label(bno, rows):
+            all_exported = all(r.get("exported_at") for r in rows)
+            icon = "✅" if all_exported else "⚠️"
+            ctc_list = ", ".join(filter(None, (r.get("ctc_invoice_no") for r in rows))) or "—"
+            return f"{icon} {bno}  [{ctc_list}]"
+
+        label_to_bno = {_make_label(bno, rows): bno for bno, rows in bno_rows.items()}
+        sorted_labels = sorted(label_to_bno)
+
+        selected_labels = st.multiselect(
+            "เลือก Booking No.",
+            options=sorted_labels,
+            placeholder="เลือกได้หลาย Booking No.",
+        )
+        selected_bnos = [label_to_bno[l] for l in selected_labels]
+
+        # เคลียร์ PDF cache เมื่อ selection เปลี่ยน (คงสถานะ checkbox ไว้)
+        if st.session_state.get("_export_bnos") != selected_bnos:
+            st.session_state.pop("export_pdf", None)
+            st.session_state["_export_bnos"] = selected_bnos
+        if "export_checks" not in st.session_state:
+            st.session_state["export_checks"] = {}
+
+        if selected_bnos:
+            try:
+                # ── โหลดข้อมูลทั้งหมดสำหรับ preview ──
+                all_records = []   # [{header, items}, ...]
+                preview_rows = []  # rows สำหรับ DataFrame
+
+                # โหลด no_container / no_pallet / country จาก bookings table
+                bk_res = (
+                    supabase.table(TBL_BOOKINGS)
+                    .select("booking_no,no_container,no_pallet,country")
+                    .in_("booking_no", selected_bnos)
+                    .execute()
+                )
+                bk_map = {r["booking_no"]: r for r in (bk_res.data or [])}
+
+                for bno in selected_bnos:
+                    hdrs = (
+                        supabase.table(TBL_LOCAL_CHARGES_V2)
+                        .select("*")
+                        .eq("booking_no", bno)
+                        .execute()
+                    ).data
+                    for hdr in hdrs:
+                        its = (
+                            supabase.table(TBL_LOCAL_CHARGE_ITEMS)
+                            .select("*")
+                            .eq("local_charge_id", hdr["id"])
+                            .execute()
+                        ).data
+                        subtotal = sum(float(it.get("total") or 0) for it in its)
+                        vat_7 = float(hdr.get("vat_7") or 0)
+                        wht_1 = float(hdr.get("wht_1") or 0)
+                        wht_3 = float(hdr.get("wht_3") or 0)
+                        net   = subtotal + vat_7 - wht_1 - wht_3
+                        bk    = bk_map.get(bno, {})
+                        all_records.append({"header": hdr, "items": its, "bk": bk})
+                        preview_rows.append({
+                            "เลือก":          st.session_state["export_checks"].get(hdr["id"], True),
+                            "Booking No.":    bno,
+                            "CTC Invoice":    hdr.get("ctc_invoice_no") or "—",
+                            "Pay To":         hdr.get("pay_to") or "—",
+                            "ยอดสุทธิ (THB)": round(net, 2),
+                            "Delivery Port":  hdr.get("delivery_port") or "—",
+                            "No. Container":  bk.get("no_container") or "—",
+                            "No. Pallet":     bk.get("no_pallet") or "—",
+                            "สถานะ":          "✅ Exported" if hdr.get("exported_at") else "⚠️ ยังไม่ export",
+                        })
+
+                # ── ตารางตัวอย่าง + เลือก/ไม่เลือก ──
+                st.markdown("**ตัวอย่างข้อมูล** — ติ๊กถูกรายการที่ต้องการ Export")
+                df_preview = pd.DataFrame(preview_rows)
+                edited = st.data_editor(
+                    df_preview,
+                    column_config={
+                        "เลือก":          st.column_config.CheckboxColumn("เลือก", default=True),
+                        "ยอดสุทธิ (THB)": st.column_config.NumberColumn("ยอดสุทธิ (THB)", format="%.2f"),
+                    },
+                    disabled=["Booking No.", "CTC Invoice", "Pay To", "ยอดสุทธิ (THB)", "Delivery Port", "No. Container", "No. Pallet", "สถานะ"],
+                    hide_index=True,
+                    use_container_width=True,
+                    key="export_preview_editor",
+                )
+
+                # บันทึกสถานะ checkbox กลับใน session state
+                for i, rec in enumerate(all_records):
+                    st.session_state["export_checks"][rec["header"]["id"]] = bool(edited.iloc[i]["เลือก"])
+
+                n_selected = int(edited["เลือก"].sum())
+                st.caption(f"เลือกอยู่ {n_selected} / {len(edited)} รายการ")
+
+                # ── Cover Page Preview & Editor ──────────────────────
+                st.divider()
+                st.markdown("**ตัวอย่าง Cover Page** — แก้ไข รายการ / Remark ได้ก่อน Export")
+                cover_rows = []
+                for i, rec in enumerate(all_records):
+                    hdr = rec["header"]
+                    bk  = rec.get("bk") or {}
+                    its = rec["items"]
+                    subtotal = sum(float(it.get("total") or 0) for it in its)
+                    vat_7 = float(hdr.get("vat_7") or 0)
+                    wht_1 = float(hdr.get("wht_1") or 0)
+                    wht_3 = float(hdr.get("wht_3") or 0)
+                    net   = round(subtotal + vat_7 - wht_1 - wht_3, 2)
+                    cats  = sorted(set(it.get("category") or "other" for it in its))
+                    default_part = "+ ".join(c.upper().replace("_", "") for c in cats)
+                    cover_rows.append({
+                        "_id":         hdr["id"],
+                        "รายการ":      default_part,
+                        "Invoice No.": hdr.get("ctc_invoice_no") or "-",
+                        "Country":     bk.get("country") or "-",
+                        "Pay To":      hdr.get("pay_to") or "-",
+                        "Due Date":    hdr.get("due_date") or "-",
+                        "Remark":      hdr.get("remark") or "",
+                        "Amount":      net,
+                    })
+
+                df_cover = pd.DataFrame(cover_rows)
+                edited_cover = st.data_editor(
+                    df_cover,
+                    column_config={
+                        "_id":    st.column_config.Column("_id", disabled=True),
+                        "Amount": st.column_config.NumberColumn("Amount (THB)", format="%.2f", disabled=True),
+                    },
+                    column_order=["รายการ", "Invoice No.", "Country", "Pay To", "Due Date", "Remark", "Amount"],
+                    disabled=["_id", "Amount"],
+                    hide_index=True,
+                    use_container_width=True,
+                    key="cover_page_editor",
+                )
+
+                # ฉีด cover fields เข้าใน all_records (ใช้เฉพาะ cover page PDF)
+                cover_edit_map = {row["_id"]: row for _, row in edited_cover.iterrows()}
+                for rec in all_records:
+                    eid = rec["header"]["id"]
+                    if eid in cover_edit_map:
+                        rec["cover_part"]    = cover_edit_map[eid]["รายการ"]
+                        rec["cover_inv"]     = cover_edit_map[eid]["Invoice No."]
+                        rec["cover_country"] = cover_edit_map[eid]["Country"]
+                        rec["cover_payto"]   = cover_edit_map[eid]["Pay To"]
+                        rec["cover_due"]     = cover_edit_map[eid]["Due Date"]
+                        rec["cover_remark"]  = cover_edit_map[eid]["Remark"]
+
+                st.divider()
+                st.markdown("**ผู้รับผิดชอบ**")
+                _pc1, _pc2 = st.columns(2)
+                prepared_name  = _pc1.text_input("ชื่อผู้รับผิดชอบ", key="export_prepared_name",  placeholder="ชื่อ-นามสกุล")
+                prepared_phone = _pc2.text_input("เบอร์โทรศัพท์",   key="export_prepared_phone", placeholder="02-xxx-xxxx")
+
+                if st.button("📄 Generate PDF", use_container_width=True, disabled=(n_selected == 0)):
+                    filtered = [all_records[i] for i, chk in enumerate(edited["เลือก"]) if chk]
+                    if filtered:
+                        st.session_state["export_pdf"]      = generate_expense_pdf(filtered, prepared_by=prepared_name, prepared_by_phone=prepared_phone)
+                        st.session_state["export_filename"] = "expense_summary_" + "_".join(selected_bnos) + ".pdf"
+                        # Mark exported rows in Supabase
+                        from datetime import datetime, timezone
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        exported_ids = [all_records[i]["header"]["id"] for i, chk in enumerate(edited["เลือก"]) if chk]
+                        for eid in exported_ids:
+                            supabase.table(TBL_LOCAL_CHARGES_V2).update({"exported_at": now_iso}).eq("id", eid).execute()
+                    else:
+                        st.warning("กรุณาเลือกอย่างน้อย 1 รายการ")
+
+            except Exception as e:
+                st.error(f"❌ Load Error: {e}")
+
+        if st.session_state.get("export_pdf"):
+            st.download_button(
+                label="⬇️ ดาวน์โหลด PDF",
+                data=st.session_state["export_pdf"],
+                file_name=st.session_state.get("export_filename", "export.pdf"),
+                mime="application/pdf",
+                use_container_width=True,
+            )
