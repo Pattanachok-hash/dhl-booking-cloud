@@ -747,7 +747,7 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
 
     def _draw_cover_row(pdf_obj, cw, vals, aligns, fill=False, bold=False, fill_color=None):
         """Draw one row with auto row-height and word-wrap for part/payto/remark."""
-        WRAP_KEYS = {"part", "payto", "remark"}
+        WRAP_KEYS = {"part", "inv", "payto", "remark"}
         if fill_color:
             pdf_obj.set_fill_color(*fill_color)
         pdf_obj.set_font("Tahoma", "B" if bold else "", 7.5)
