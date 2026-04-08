@@ -2042,7 +2042,9 @@ if page == "💰 Local Charges":
             aw5.markdown(f"<div style='padding-top:8px; text-align:right'><b>{after_wht:,.2f}</b></div>", unsafe_allow_html=True)
 
             # ── Save ──────────────────────────────────────────────
-            if st.button("💾 บันทึก", use_container_width=True, key="lc_save"):
+            if not hdr_due_date.strip():
+                st.warning("⚠️ กรุณากรอก Due Date ก่อนบันทึก")
+            if st.button("💾 บันทึก", use_container_width=True, key="lc_save", disabled=not hdr_due_date.strip()):
                 header = {
                     "agent_invoice_no": hdr_agent_invoice_no or None,
                     "pay_to":        hdr_pay_to or None,
