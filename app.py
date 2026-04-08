@@ -732,13 +732,23 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
 
     def _count_lines(pdf_obj, text, col_w):
         """Count lines needed for text in a given column width."""
+        import math
         if not text:
             return 1
+        effective_w = col_w - 2
         words = str(text).split()
         lines, line_w = 1, 0.0
         for word in words:
             ww = pdf_obj.get_string_width(word + " ")
-            if line_w + ww > col_w - 2 and line_w > 0:
+            if ww > effective_w:
+                # Word wider than column (e.g. long invoice no. with no spaces)
+                if line_w > 0:
+                    lines += 1
+                    line_w = 0
+                word_lines = math.ceil(ww / effective_w)
+                lines += word_lines - 1
+                line_w = ww - (word_lines - 1) * effective_w
+            elif line_w + ww > effective_w and line_w > 0:
                 lines += 1
                 line_w = ww
             else:
