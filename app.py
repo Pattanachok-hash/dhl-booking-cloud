@@ -926,12 +926,20 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
             qty_str   = f"{qty:,.3f}" if qty else ""
             total_str = f"{total:,.2f}" if total else "-"
 
-            pdf.cell(CW["inv"],  6, invoice_no, border=1, align="C")
-            pdf.cell(CW["name"], 6, desc[:45],  border=1)
-            pdf.cell(CW["rate"], 6, rate_str,   border=1, align="R")
-            pdf.cell(CW["x"],    6, "x",        border=1, align="C")
-            pdf.cell(CW["qty"],  6, qty_str,    border=1, align="R")
-            pdf.cell(CW["amt"],  6, total_str,  border=1, align="R", new_x="LMARGIN", new_y="NEXT")
+            # split long invoice numbers at "+" so they wrap within the column
+            inv_display = invoice_no.replace("+", "+\n") if invoice_no else ""
+            inv_lines   = inv_display.count("\n") + 1 if inv_display else 1
+            row_h       = max(6, inv_lines * 5)
+
+            if inv_lines > 1:
+                pdf.multi_cell(CW["inv"], 5, inv_display, border=1, align="C", new_x="RIGHT", new_y="TOP")
+            else:
+                pdf.cell(CW["inv"], row_h, inv_display, border=1, align="C")
+            pdf.cell(CW["name"], row_h, desc[:45],  border=1)
+            pdf.cell(CW["rate"], row_h, rate_str,   border=1, align="R")
+            pdf.cell(CW["x"],    row_h, "x",        border=1, align="C")
+            pdf.cell(CW["qty"],  row_h, qty_str,    border=1, align="R")
+            pdf.cell(CW["amt"],  row_h, total_str,  border=1, align="R", new_x="LMARGIN", new_y="NEXT")
             invoice_no = ""  # show only on first row
 
         # ── Summary rows ──
