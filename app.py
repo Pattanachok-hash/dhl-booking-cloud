@@ -903,7 +903,7 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
         pdf.cell(CW["qty"],  7, "QUANTITY",    border=1, fill=True, align="C")
         pdf.cell(CW["amt"],  7, "AMOUNT",      border=1, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
 
-        # ── Table rows ──
+        # ── Table rows — invoice_no merged cell spanning all items ──
         invoice_no = hdr.get("ctc_invoice_no") or ""
         subtotal = 0.0
         pdf.set_font("Tahoma", "", 8)
@@ -915,7 +915,22 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
         ]
         items = sorted(items, key=lambda x: _CAT_ORDER.index(x.get("category") or "other")
                        if (x.get("category") or "other") in _CAT_ORDER else len(_CAT_ORDER))
-        for it in items:
+
+        ROW_H   = 6
+        x0, y0  = pdf.get_x(), pdf.get_y()
+        total_h = len(items) * ROW_H
+
+        # Draw invoice_no as one tall cell spanning all rows
+        inv_display = invoice_no.replace("+", "+\n") if invoice_no else ""
+        inv_lines   = inv_display.count("\n") + 1 if inv_display else 1
+        pdf.rect(x0, y0, CW["inv"], total_h)
+        v_offset = max(0, (total_h - inv_lines * ROW_H) / 2)
+        pdf.set_xy(x0 + 1, y0 + v_offset)
+        pdf.multi_cell(CW["inv"] - 2, ROW_H, inv_display, border=0, align="C",
+                       new_x="RIGHT", new_y="TOP")
+
+        # Draw each item row (no invoice column)
+        for i, it in enumerate(items):
             desc      = it.get("description") or ""
             rate      = float(it.get("rate") or 0)
             qty       = float(it.get("qty") or 0)
@@ -926,21 +941,14 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
             qty_str   = f"{qty:,.3f}" if qty else ""
             total_str = f"{total:,.2f}" if total else "-"
 
-            # split long invoice numbers at "+" so they wrap within the column
-            inv_display = invoice_no.replace("+", "+\n") if invoice_no else ""
-            inv_lines   = inv_display.count("\n") + 1 if inv_display else 1
-            row_h       = max(6, inv_lines * 5)
+            pdf.set_xy(x0 + CW["inv"], y0 + i * ROW_H)
+            pdf.cell(CW["name"], ROW_H, desc[:45],  border=1)
+            pdf.cell(CW["rate"], ROW_H, rate_str,   border=1, align="R")
+            pdf.cell(CW["x"],    ROW_H, "x",        border=1, align="C")
+            pdf.cell(CW["qty"],  ROW_H, qty_str,    border=1, align="R")
+            pdf.cell(CW["amt"],  ROW_H, total_str,  border=1, align="R")
 
-            if inv_lines > 1:
-                pdf.multi_cell(CW["inv"], 5, inv_display, border=1, align="C", new_x="RIGHT", new_y="TOP")
-            else:
-                pdf.cell(CW["inv"], row_h, inv_display, border=1, align="C")
-            pdf.cell(CW["name"], row_h, desc[:45],  border=1)
-            pdf.cell(CW["rate"], row_h, rate_str,   border=1, align="R")
-            pdf.cell(CW["x"],    row_h, "x",        border=1, align="C")
-            pdf.cell(CW["qty"],  row_h, qty_str,    border=1, align="R")
-            pdf.cell(CW["amt"],  row_h, total_str,  border=1, align="R", new_x="LMARGIN", new_y="NEXT")
-            invoice_no = ""  # show only on first row
+        pdf.set_xy(pdf.l_margin, y0 + total_h)
 
         # ── Summary rows ──
         vat_7     = float(hdr.get("vat_7")  or 0)
