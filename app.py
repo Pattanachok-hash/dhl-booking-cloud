@@ -5,24 +5,34 @@ import base64
 import pytz
 import streamlit as st
 import pandas as pd
+import os
 from google import genai
 from google.genai import types
 from supabase import create_client, Client
 from datetime import datetime
 
+def get_secret(key):
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.environ.get(key)
+
 # ─────────────────────────────────────────
 # 1. CONFIGURATION
 # ─────────────────────────────────────────
-try:
-    SUPABASE_URL  = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY  = st.secrets["SUPABASE_KEY"]
-    GEMINI_KEY    = st.secrets["GENAI_API_KEY"]
-    TBL_BOOKINGS          = "bookings"
-    TBL_REVISIONS         = "booking_revisions"
-    TBL_LOCAL_CHARGES     = "local_charges"
-    TBL_LOCAL_CHARGES_V2  = "local_charges_v2"
+SUPABASE_URL  = get_secret("SUPABASE_URL")
+SUPABASE_KEY  = get_secret("SUPABASE_KEY")
+GEMINI_KEY    = get_secret("GENAI_API_KEY")
+
+if SUPABASE_URL and SUPABASE_KEY and GEMINI_KEY:
+    TBL_BOOKINGS           = "bookings"
+    TBL_REVISIONS          = "booking_revisions"
+    TBL_LOCAL_CHARGES      = "local_charges"
+    TBL_LOCAL_CHARGES_V2   = "local_charges_v2"
     TBL_LOCAL_CHARGE_ITEMS = "local_charge_items"
-except Exception:
+else:
     # สำหรับใช้รันในเครื่องตัวเอง (Local) ถ้ายังไม่ได้ตั้งค่า Secrets
     st.error("❌ ไม่พบ API Keys ในระบบ Secrets กรุณาตั้งค่าที่ Settings > Secrets")
     st.stop()
