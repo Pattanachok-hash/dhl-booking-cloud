@@ -7,4 +7,3 @@ xlsxwriter
 pytz
 fpdf2
 pypdf
-os
