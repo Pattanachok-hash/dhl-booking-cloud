@@ -268,7 +268,7 @@ Return ONLY a JSON object (no markdown, no explanation):
   "container_type":      null,
   "no_pallet":           null,
   "cy_at":               null,
-  "return_place":        null,
+  "return_place":        "Don Mueang or Suvarnabhumi",
   "paperless_code":      null,
   "liner_cutoff":        "dd/mm/yyyy or null",
   "vgm_cutoff":          null,
@@ -289,6 +289,9 @@ Rules:
   The date is the portion after "/" in the flight number (e.g. "XJ230/03" → day 03 of the document's month/year).
   Do NOT use "Executed on (date)" — that is the AWB issue date, not the flight date. Format dd/mm/yyyy.
 - liner_cutoff: ETD minus 1 day. Format dd/mm/yyyy.
+- return_place: Airport of Departure — map to ONLY one of these two values:
+  "Don Mueang" → if departure airport is Don Mueang / DMK / THDMK
+  "Suvarnabhumi" → if departure airport is Suvarnabhumi / BKK / THBKK
 - eta: arrival date if shown, otherwise null.
 - country: consignee's country. If not stated, infer from Airport of Destination.
 - port_of_destination: Airport of Destination city (e.g. "DELHI").
@@ -636,9 +639,9 @@ Rules:
 - due_date: payment due date — look for labels "Due Date", "Payment Due", "Due", "วันครบกำหนดชำระ". Format as DD/MM/YYYY. null if not found.
 - bl_no: Bill of Lading number — extract using this priority:
   1. Kuehne+Nagel: use "KN TRACKING NO."
-  2. Others: "House Bill of Lading" or "House B/L" first
-  3. Fallback: "B/L No.", "Bill of Lading", or "OBL NO."
-  4. Never use "Master Bill of Lading" or "MB/L"
+  2. Others: "House Bill of Lading", "House B/L", "HAWB", or "HAWB No." first
+  3. Fallback: "B/L No.", "Bill of Lading", "OBL NO.", or "SHIPMENT" field
+  4. Never use "Master Bill of Lading", "MB/L", or "MAWB"
 - vat_applicable: true if invoice mentions "7% VAT", "VAT 7%", "7.00% PURSUANT TO SECTION 80 (2) OF TRC" or has a VAT line item. false otherwise.
 - items: list of ALL charge line items found in the invoice (exclude VAT and WHT rows — those are calculated by the system).
   - description: exact charge name as shown in invoice
