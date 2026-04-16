@@ -240,8 +240,118 @@ def extract_from_pdf(file_bytes: bytes) -> list[dict]:
             raw = raw[4:]
     result = json.loads(raw.strip())
     return result if isinstance(result, list) else [result]
- 
- 
+
+
+# ─────────────────────────────────────────
+# 5c. AIR AWB — PROMPT & FUNCTIONS
+# ─────────────────────────────────────────
+
+PROMPT_DETECT_TYPE = """Look at this shipping document and determine if it is:
+- "air"  : Air Waybill (AWB / HAWB) — documents for air freight shipment
+- "sea"  : Sea Booking Confirmation or Bill of Lading — documents for ocean freight
+
+Reply with ONLY one word: air  or  sea"""
+
+
+PROMPT_BOOKING_AIR = """You are a DHL Logistics Analyst. Extract shipping info from this Air Waybill (AWB/HAWB).
+
+Return ONLY a JSON object (no markdown, no explanation):
+{
+  "booking_no":          "11-digit AWB number (digits only)",
+  "fcl_or_lcl":          null,
+  "by_air_or_sea":       "Air",
+  "country":             "destination country",
+  "port_of_destination": "destination airport or city",
+  "liner_name":          "freight forwarder or issuing agent name",
+  "vessel_name":         "flight number",
+  "no_container":        null,
+  "container_type":      null,
+  "no_pallet":           null,
+  "cy_at":               null,
+  "return_place":        null,
+  "paperless_code":      null,
+  "liner_cutoff":        "dd/mm/yyyy or null",
+  "vgm_cutoff":          null,
+  "si_cutoff":           null,
+  "return_date_1st":     null,
+  "cy_date":             null,
+  "etd":                 "dd/mm/yyyy or null",
+  "eta":                 "dd/mm/yyyy or null"
+}
+
+Rules:
+- booking_no: ALWAYS use the number at the TOP-LEFT corner of the document only.
+  It contains letters mixed in (e.g. "940DMK15635815") — strip ALL letters, concatenate digits only → "94015635815".
+  Result must be exactly 11 digits. Do NOT use HAWB No., AWB No., or any other reference number.
+- liner_name: freight forwarder or issuing agent (e.g. "HELLMANN WORLDWIDE LOGISTICS CO LTD") — look for "Issued by", "Issuing Carrier's Agent", or company letterhead top-right. NOT the airline.
+- vessel_name: flight number (e.g. "XJ230/03") — from "Requested Flight/Date" or "Flight/Date" field.
+- etd: flight departure date — from "Requested Flight/Date" or "Flight/Date" field.
+  The date is the portion after "/" in the flight number (e.g. "XJ230/03" → day 03 of the document's month/year).
+  Do NOT use "Executed on (date)" — that is the AWB issue date, not the flight date. Format dd/mm/yyyy.
+- liner_cutoff: ETD minus 1 day. Format dd/mm/yyyy.
+- eta: arrival date if shown, otherwise null.
+- country: consignee's country. If not stated, infer from Airport of Destination.
+- port_of_destination: Airport of Destination city (e.g. "DELHI").
+- All null fields: leave as null."""
+
+
+def detect_doc_type_by_ai(file_bytes: bytes) -> str:
+    res = genai_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+                    types.Part.from_text(text=PROMPT_DETECT_TYPE),
+                ],
+            )
+        ],
+    )
+    return "air" if "air" in res.text.strip().lower() else "sea"
+
+
+def extract_air_awb(file_bytes: bytes) -> list[dict]:
+    """Extract Air Waybill — liner_cutoff คำนวณจาก ETD-1 วัน (Python override)"""
+    from datetime import timedelta
+    ai_config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.0,
+        seed=42,
+    )
+    res = genai_client.models.generate_content(
+        model=GEMINI_MODEL_BOOKING,
+        contents=[
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=PROMPT_BOOKING_AIR),
+                    types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+                ],
+            )
+        ],
+        config=ai_config,
+    )
+    raw = res.text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    records = json.loads(raw.strip())
+    if not isinstance(records, list):
+        records = [records]
+
+    for rec in records:
+        etd_str = rec.get("etd")
+        if etd_str:
+            try:
+                cutoff_dt = datetime.strptime(etd_str, "%d/%m/%Y") - timedelta(days=1)
+                rec["liner_cutoff"] = cutoff_dt.strftime("%d/%m/%Y")
+            except Exception:
+                pass
+    return records
+
+
 def save_to_supabase(data_list: list[dict]) -> bool:
     """Upsert to bookings (by booking_no) and insert to revisions."""
     try:
@@ -1074,7 +1184,8 @@ if page == "📤 Upload & Extract":
         )
 
         def process_file(name, file_bytes, warehouse):
-            items = extract_from_pdf(file_bytes)
+            doc_type = detect_doc_type_by_ai(file_bytes)
+            items = extract_air_awb(file_bytes) if doc_type == "air" else extract_from_pdf(file_bytes)
             if items:
                 for item in items:
                     item["source_file"] = name
@@ -1248,6 +1359,25 @@ if page == "📤 Upload & Extract":
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ Save Error: {e}")
+
+            # ── Delete Booking ─────────────────────────────────────
+            st.divider()
+            st.subheader("🗑️ ลบ Booking")
+
+            del_bk = st.selectbox("เลือก Booking ที่ต้องการลบ",
+                                  ["-- เลือก --"] + all_bk_nos, key="del_bk_select")
+
+            if del_bk != "-- เลือก --":
+                st.warning(f"⚠️ จะลบ **{del_bk}** ออกจากฐานข้อมูลถาวร")
+                confirm = st.checkbox("ยืนยันการลบ", key="del_confirm")
+                if confirm:
+                    if st.button("🗑️ ลบเลย", type="primary", key="del_btn"):
+                        try:
+                            supabase.table(TBL_BOOKINGS).delete().eq("booking_no", del_bk).execute()
+                            st.success(f"✅ ลบ {del_bk} เรียบร้อยแล้ว")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Delete Error: {e}")
 
         else:
             st.info("📌 ยังไม่มีข้อมูล — อัปโหลด PDF เพื่อเริ่มต้น")
