@@ -643,6 +643,7 @@ Rules:
   3. Fallback: "B/L No.", "Bill of Lading", "OBL NO.", or "SHIPMENT" field
   4. Never use "Master Bill of Lading", "MB/L", or "MAWB"
 - vat_applicable: true if invoice mentions "7% VAT", "VAT 7%", "7.00% PURSUANT TO SECTION 80 (2) OF TRC" or has a VAT line item. false otherwise.
+  Exception: if the issuer is GEODIS and the VAT column explicitly shows "0%" or "0% = 0" (i.e. zero-rated), set vat_applicable = false regardless of whether a VAT column is present.
 - items: list of ALL charge line items found in the invoice (exclude VAT and WHT rows — those are calculated by the system).
   - description: exact charge name as shown in invoice
   - category: classify this charge into one of these fixed values:
@@ -689,10 +690,13 @@ Rules:
          WHT 0%: description contains "FREIGHT" or "OCEAN FREIGHT" or "AIR FREIGHT"
          WHT 1%: description contains "TRANSPORT" or "TRUCKING" or "DELIVERY"
          WHT 3%: ALL other charges (Export Handling, Handling Fee, SEAL, VGM, ENVIRONMENTAL, SECURITY, EDI, etc.)
+    5d. If the issuer is GEODIS and no per-item WHT is stated:
+       - WHT 0%: description contains "Late Pickup B/L" or "Late Pick-up B/L"
+       - WHT 3%: any item whose description does NOT contain "Late Pickup B/L" or "Late Pick-up B/L"
     6. Default: 0
   - rate: unit rate in THB. If the invoice has a RATE column in foreign currency with an EXCH RATE column, convert: rate = RATE × EXCH RATE. If no rate is shown (flat fee), set rate = total.
   - qty: number of units. If the invoice has an explicit QTY column, always use that value — even if the rate is in a foreign currency. If no quantity is shown (flat fee), set qty = 1.
-  - total: total amount for this line item (required)
+  - total: pre-VAT total amount for this line item. If the invoice shows separate columns such as "Subject to VAT Amount", "NON-VAT Amount", and "Total Amount" (VAT-inclusive), use "Subject to VAT Amount" or "NON-VAT Amount" — NOT the "Total Amount" column. Never include VAT in this value.
 - Use numeric values only (no currency symbols, no commas). null if not found.
 """
 
