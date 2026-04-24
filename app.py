@@ -45,7 +45,7 @@ else:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai_client     = genai.Client(api_key=GEMINI_KEY)
 GEMINI_MODEL_BOOKING = "models/gemini-2.5-flash"
-GEMINI_MODEL         = "models/gemini-3.1-flash-lite-preview"
+GEMINI_MODEL         = "models/gemini-2.5-flash"
 
 # ─────────────────────────────────────────
 # 2. PAGE CONFIG
@@ -695,7 +695,17 @@ Rules:
        - WHT 3%: any item whose description does NOT contain "Late Pickup B/L" or "Late Pick-up B/L"
     6. Default: 0
   - rate: unit rate in THB. If the invoice has a RATE column in foreign currency with an EXCH RATE column, convert: rate = RATE × EXCH RATE. If no rate is shown (flat fee), set rate = total.
-  - qty: number of units. If the invoice has an explicit QTY column, always use that value — even if the rate is in a foreign currency. If no quantity is shown (flat fee), set qty = 1.
+    Exception: for DSV or SEKO THC items where qty is derived from the container count (see qty rule below), if no per-unit rate column is present set rate = round(total / qty, 2).
+  - qty: number of units. If the invoice has an explicit QTY column, always use that value — even if the rate is in a foreign currency.
+    Special rule for DSV and SEKO — THC items only: if the issuer is DSV or SEKO, the item category is thc_40hc, thc_40dv, or thc_20gp, and there is no explicit QTY column:
+      1. Find the CONTAINERS section and count containers by type (formats vary: "TCNU5588680 - 40HC" or "BEAU5332480 (40HC - Forty foot high cube)"):
+         thc_40hc → count containers labeled 40HC, 45HC, or 40HQ
+         thc_40dv → count containers labeled 40GP, 40DV, or 40ST
+         thc_20gp → count containers labeled 20GP, 20DV, or 20ST
+      2. Single container type (all containers same type, one THC line): set qty = total container count for that type.
+      3. Mixed container types (e.g. both 40HC and 20GP, two THC lines with no type label): try both possible assignments and choose the one where the per-unit rate of the 40HC line (total ÷ count_40hc) is greater than the per-unit rate of the 20GP line (total ÷ count_20gp) — this is always true because 40HC THC rate is always higher than 20GP THC rate. Set qty accordingly for each line.
+      4. If no CONTAINERS section is found, fall back to qty = 1.
+    Default (all other cases): if no quantity is shown (flat fee), set qty = 1.
   - total: pre-VAT total amount for this line item. If the invoice shows separate columns such as "Subject to VAT Amount", "NON-VAT Amount", and "Total Amount" (VAT-inclusive), use "Subject to VAT Amount" or "NON-VAT Amount" — NOT the "Total Amount" column. Never include VAT in this value.
 - Use numeric values only (no currency symbols, no commas). null if not found.
 """
@@ -706,6 +716,7 @@ def extract_local_charges(file_bytes: bytes, shipment_type: str = "") -> dict:
         response_mime_type="application/json",
         temperature=0.0,
         seed=42,
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
     )
     prompt = PROMPT_LOCAL_CHARGES
     if shipment_type:
@@ -736,6 +747,18 @@ def extract_local_charges(file_bytes: bytes, shipment_type: str = "") -> dict:
         result["_multi_invoice"] = True
 
     items = result.get("items") or []
+
+    # For DSV and SEKO: set seal qty = sum of all THC quantities
+    pay_to = (result.get("pay_to") or "").upper()
+    if "DSV" in pay_to or "SEKO" in pay_to:
+        thc_categories = {"thc_40hc", "thc_40dv", "thc_20gp"}
+        total_thc_qty = sum(int(it.get("qty") or 1) for it in items if it.get("category") in thc_categories)
+        if total_thc_qty > 0:
+            for it in items:
+                if it.get("category") == "seal":
+                    it["qty"] = total_thc_qty
+                    if it.get("total") and total_thc_qty > 0:
+                        it["rate"] = round(float(it["total"]) / total_thc_qty, 2)
 
     # Calculate VAT 7% in Python
     if result.get("vat_applicable"):
