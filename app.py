@@ -780,7 +780,9 @@ def save_local_charge_v2(header: dict, items: list, pdf_bytes: bytes = None, fil
         # อัพโหลด invoice PDF ไปยัง Supabase Storage ก่อน
         if pdf_bytes and filename:
             import uuid as _uuid
-            path = f"{_uuid.uuid4()}_{filename}"
+            import re as _re
+            safe_name = _re.sub(r"[^A-Za-z0-9._-]+", "_", filename).strip("_")
+            path = f"{_uuid.uuid4()}_{safe_name}"
             supabase.storage.from_("local-charge-invoices").upload(
                 path, pdf_bytes, {"content-type": "application/pdf"}
             )
