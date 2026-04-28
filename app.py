@@ -1071,46 +1071,60 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
         ROW_H   = 6
         x0, y0  = pdf.get_x(), pdf.get_y()
 
-        # ปล่อย multi_cell wrap auto (ไม่ split ทุก "+")
         inv_display = invoice_no or ""
         pdf.set_font("Tahoma", "", 8)
         inv_lines = _count_lines(pdf, inv_display, CW["inv"]) if inv_display else 1
 
-        # ขยาย item row height ถ้า invoice_no ยาวกว่าจำนวน items
+        # พื้นที่เหลือบนหน้า เผื่อ summary rows (~50mm)
+        page_break_y = pdf.h - pdf.b_margin
+        available_h  = max(50, page_break_y - y0 - 50)
+
+        # คำนวณ row heights — กันทั้ง inv และ items ให้ fit ใน available_h
         n_items = len(items) or 1
-        if inv_lines > n_items:
-            import math as _math
-            item_row_h = _math.ceil((inv_lines * ROW_H) / n_items)
+        max_lines = max(inv_lines, n_items)
+
+        if max_lines * ROW_H > available_h:
+            scaled_row_h = max(3.0, available_h / max_lines)
         else:
-            item_row_h = ROW_H
-        total_h = n_items * item_row_h
+            scaled_row_h = ROW_H
 
-        # Draw invoice_no as one tall cell spanning all rows
-        pdf.rect(x0, y0, CW["inv"], total_h)
-        inv_h = inv_lines * ROW_H
-        v_offset = max(0, (total_h - inv_h) / 2)
-        pdf.set_xy(x0 + 1, y0 + v_offset)
-        pdf.multi_cell(CW["inv"] - 2, ROW_H, inv_display, border=0, align="C",
-                       new_x="RIGHT", new_y="TOP")
+        if inv_lines > n_items:
+            inv_row_h  = scaled_row_h
+            item_row_h = (inv_lines * scaled_row_h) / n_items
+        else:
+            inv_row_h  = scaled_row_h
+            item_row_h = scaled_row_h
+        total_h     = n_items * item_row_h
+        inv_h_total = inv_lines * inv_row_h
 
-        # Draw each item row (no invoice column)
-        for i, it in enumerate(items):
-            desc      = it.get("description") or ""
-            rate      = float(it.get("rate") or 0)
-            qty       = float(it.get("qty") or 0)
-            total     = float(it.get("total") or 0)
-            subtotal += total
+        # ปิด auto_page_break ชั่วคราว — ใช้ try/finally ป้องกันลืม restore
+        pdf.set_auto_page_break(auto=False)
+        try:
+            pdf.rect(x0, y0, CW["inv"], total_h)
+            v_offset = max(0, (total_h - inv_h_total) / 2)
+            pdf.set_xy(x0 + 1, y0 + v_offset)
+            pdf.multi_cell(CW["inv"] - 2, inv_row_h, inv_display, border=0, align="C",
+                           new_x="RIGHT", new_y="TOP")
 
-            rate_str  = f"{rate:,.2f}" if rate else ""
-            qty_str   = f"{qty:,.3f}" if qty else ""
-            total_str = f"{total:,.2f}" if total else "-"
+            for i, it in enumerate(items):
+                desc      = it.get("description") or ""
+                rate      = float(it.get("rate") or 0)
+                qty       = float(it.get("qty") or 0)
+                total     = float(it.get("total") or 0)
+                subtotal += total
 
-            pdf.set_xy(x0 + CW["inv"], y0 + i * item_row_h)
-            pdf.cell(CW["name"], item_row_h, desc[:45],  border=1)
-            pdf.cell(CW["rate"], item_row_h, rate_str,   border=1, align="R")
-            pdf.cell(CW["x"],    item_row_h, "x",        border=1, align="C")
-            pdf.cell(CW["qty"],  item_row_h, qty_str,    border=1, align="R")
-            pdf.cell(CW["amt"],  item_row_h, total_str,  border=1, align="R")
+                rate_str  = f"{rate:,.2f}" if rate else ""
+                qty_str   = f"{qty:,.3f}" if qty else ""
+                total_str = f"{total:,.2f}" if total else "-"
+
+                pdf.set_xy(x0 + CW["inv"], y0 + i * item_row_h)
+                pdf.cell(CW["name"], item_row_h, desc[:45],  border=1)
+                pdf.cell(CW["rate"], item_row_h, rate_str,   border=1, align="R")
+                pdf.cell(CW["x"],    item_row_h, "x",        border=1, align="C")
+                pdf.cell(CW["qty"],  item_row_h, qty_str,    border=1, align="R")
+                pdf.cell(CW["amt"],  item_row_h, total_str,  border=1, align="R")
+        finally:
+            pdf.set_auto_page_break(auto=True, margin=15)
 
         pdf.set_xy(pdf.l_margin, y0 + total_h)
 
