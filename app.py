@@ -1070,13 +1070,25 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
 
         ROW_H   = 6
         x0, y0  = pdf.get_x(), pdf.get_y()
-        total_h = len(items) * ROW_H
+
+        # ปล่อย multi_cell wrap auto (ไม่ split ทุก "+")
+        inv_display = invoice_no or ""
+        pdf.set_font("Tahoma", "", 8)
+        inv_lines = _count_lines(pdf, inv_display, CW["inv"]) if inv_display else 1
+
+        # ขยาย item row height ถ้า invoice_no ยาวกว่าจำนวน items
+        n_items = len(items) or 1
+        if inv_lines > n_items:
+            import math as _math
+            item_row_h = _math.ceil((inv_lines * ROW_H) / n_items)
+        else:
+            item_row_h = ROW_H
+        total_h = n_items * item_row_h
 
         # Draw invoice_no as one tall cell spanning all rows
-        inv_display = invoice_no.replace("+", "+\n") if invoice_no else ""
-        inv_lines   = inv_display.count("\n") + 1 if inv_display else 1
         pdf.rect(x0, y0, CW["inv"], total_h)
-        v_offset = max(0, (total_h - inv_lines * ROW_H) / 2)
+        inv_h = inv_lines * ROW_H
+        v_offset = max(0, (total_h - inv_h) / 2)
         pdf.set_xy(x0 + 1, y0 + v_offset)
         pdf.multi_cell(CW["inv"] - 2, ROW_H, inv_display, border=0, align="C",
                        new_x="RIGHT", new_y="TOP")
@@ -1093,12 +1105,12 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
             qty_str   = f"{qty:,.3f}" if qty else ""
             total_str = f"{total:,.2f}" if total else "-"
 
-            pdf.set_xy(x0 + CW["inv"], y0 + i * ROW_H)
-            pdf.cell(CW["name"], ROW_H, desc[:45],  border=1)
-            pdf.cell(CW["rate"], ROW_H, rate_str,   border=1, align="R")
-            pdf.cell(CW["x"],    ROW_H, "x",        border=1, align="C")
-            pdf.cell(CW["qty"],  ROW_H, qty_str,    border=1, align="R")
-            pdf.cell(CW["amt"],  ROW_H, total_str,  border=1, align="R")
+            pdf.set_xy(x0 + CW["inv"], y0 + i * item_row_h)
+            pdf.cell(CW["name"], item_row_h, desc[:45],  border=1)
+            pdf.cell(CW["rate"], item_row_h, rate_str,   border=1, align="R")
+            pdf.cell(CW["x"],    item_row_h, "x",        border=1, align="C")
+            pdf.cell(CW["qty"],  item_row_h, qty_str,    border=1, align="R")
+            pdf.cell(CW["amt"],  item_row_h, total_str,  border=1, align="R")
 
         pdf.set_xy(pdf.l_margin, y0 + total_h)
 
