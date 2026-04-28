@@ -1016,6 +1016,18 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
         hdr   = rec["header"]
         items = rec["items"]
 
+        # ปรับ column widths ตามจำนวน invoice no.
+        # ถ้า > 10 ตัว → ขยาย inv column เพื่อให้ wrap 2 ตัว/บรรทัด, ลด description ลง
+        _inv_no_tmp = hdr.get("ctc_invoice_no") or ""
+        _inv_count = _inv_no_tmp.count("+") + 1 if _inv_no_tmp else 1
+        if _inv_count > 10:
+            CW["inv"]  = 50
+            CW["name"] = 50
+        else:
+            CW["inv"]  = 28
+            CW["name"] = 72
+        LABEL_W = CW["inv"] + CW["name"] + CW["rate"] + CW["x"] + CW["qty"]
+
         pdf.add_page()
 
         # ── Header info ──
@@ -1083,8 +1095,10 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
         n_items = len(items) or 1
         max_lines = max(inv_lines, n_items)
 
+        # font 8pt → minimum line height ≈ 3.5mm (cap + descender) เพื่อกัน text overflow
+        MIN_INV_LINE_H = 3.5
         if max_lines * ROW_H > available_h:
-            scaled_row_h = max(3.0, available_h / max_lines)
+            scaled_row_h = max(MIN_INV_LINE_H, available_h / max_lines)
         else:
             scaled_row_h = ROW_H
 
