@@ -51,7 +51,7 @@ GEMINI_MODEL         = "models/gemini-2.5-flash"
 # 2. PAGE CONFIG
 # ─────────────────────────────────────────
 st.set_page_config(
-    page_title="DHL Booking Cloud Extractor",
+    page_title="Booking Cloud Extractor",
     page_icon="🚚",
     layout="wide",
 )
@@ -94,7 +94,6 @@ _truck_svg = """<svg viewBox="0 0 230 92" xmlns="http://www.w3.org/2000/svg" wid
   <line x1="150" y1="13" x2="150" y2="64" stroke="#D4A900" stroke-width="2"/>
   <line x1="188" y1="13" x2="188" y2="64" stroke="#D4A900" stroke-width="2"/>
   <rect x="218" y="13" width="6" height="51" rx="1" fill="#D4A900" stroke="#222" stroke-width="1"/>
-  <text x="149" y="51" font-family="Arial Black,Arial,sans-serif" font-size="27" font-weight="900" fill="#D40511" text-anchor="middle" letter-spacing="-1">DHL</text>
   <rect x="4" y="10" width="66" height="63" rx="5" fill="#D40511" stroke="#222" stroke-width="2.5"/>
   <rect x="4" y="10" width="13" height="63" rx="4" fill="#B8030F" stroke="#222" stroke-width="1"/>
   <rect x="18" y="15" width="36" height="27" rx="3" fill="#AED6F1" stroke="#333" stroke-width="1.5"/>
@@ -140,7 +139,7 @@ st.markdown(f"""
             <img src="data:image/svg+xml;base64,{_truck_b64}" width="230" height="92"/>
         </div>
         <div style="flex-grow: 1;">
-            <h1 style="margin: 0; color: #333; font-size: 30px; line-height: 1.2;">DSC: CTC FG Export</h1>
+            <h1 style="margin: 0; color: #333; font-size: 30px; line-height: 1.2;">CTC FG Export</h1>
             <p style="margin: 0; color: #666; font-size: 18px;">Booking Cloud Extractor (Vision Engine)</p>
         </div>
     </div>
@@ -1194,7 +1193,7 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
 # 6. SIDEBAR NAVIGATION
 # ─────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### 🚚 DHL Logistics Menu")
+    st.markdown("### 🚚 เมนู")
     page = st.radio(
         "เลือกเมนู",
         ["📤 Upload & Extract", "📄 Generate SI (Draft)", "💰 Local Charges", "📊 Export Summary"],
@@ -1202,8 +1201,7 @@ with st.sidebar:
     )
     st.divider()
     st.markdown(
-        "<span style='font-size:11px;color:#555;'>Powered by Ship Co. (CTC Site)<br>"
-        "© DHL Supply Chain Thailand</span>",
+        "<span style='font-size:11px;color:#555;'>Powered by Ship Co. (CTC Site)</span>",
         unsafe_allow_html=True,
     )
  
@@ -1927,9 +1925,6 @@ null if not found."""
     <div style="display:flex;align-items:center;gap:16px;padding:14px 20px;
                 background:#ffffff;border:1px solid #e8e8e8;border-left:4px solid #D40511;
                 border-radius:12px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.05);">
-        <div style="background:#FFCC00;padding:8px 16px;border-radius:6px;">
-            <span style="color:#D40511;font-family:'Arial Black',sans-serif;font-size:22px;font-weight:900;">DHL</span>
-        </div>
         <div>
             <div style="color:#111;font-weight:700;font-size:17px;">Auto SI Generator</div>
             <div style="color:#999;font-size:12px;">เลือก Booking → อัปโหลด Invoice → Generate SI.xlsx</div>
