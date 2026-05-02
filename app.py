@@ -190,6 +190,7 @@ Rules:
   3. Value next to "Ref No", "Ref No.", "Reference No." — use as fallback if steps 1 and 2 yield nothing.
   4. Return null if nothing found.
   Do NOT use B/L No., forwarder ref (e.g. FLXCB-), CONSOL, or tracking number.
+  CRITICAL: Read EVERY character/digit of the booking number EXACTLY as printed — do NOT skip, merge, or drop repeated digits. If you see "80451557" do NOT shorten it to "8045157". Count the digits twice before returning. Common carrier prefixes (ZIM: GOSUBKK + 8 digits, Maersk: 9-10 digits, MSC: alphanumeric, ONE: 9 digits) — verify the length matches the carrier's typical format.
 - port_of_destination: final destination of the shipment — use the "To:" field in the booking header, or the last stop in the Intended Transport Plan. Do NOT use intermediate sea ports or terminal names (e.g. "Guadalajara Castilla La Mancha, Spain" not "APM Terminal Valencia").
 - country: use consignee's country if clearly stated in address; otherwise infer from port_of_destination.
 - cy_at: depot for picking up empty container. For Maersk bookings: use the location name of the "Empty Container Depot" row from the Load Itinerary table (Page 2).
@@ -238,7 +239,24 @@ def extract_from_pdf(file_bytes: bytes) -> list[dict]:
         if raw.startswith("json"):
             raw = raw[4:]
     result = json.loads(raw.strip())
-    return result if isinstance(result, list) else [result]
+    records = result if isinstance(result, list) else [result]
+
+    # Verify booking_no against PDF text layer (catches AI dropping/merging digits)
+    try:
+        from pypdf import PdfReader
+        import io as _io, re as _re
+        _text = "\n".join((p.extract_text() or "") for p in PdfReader(_io.BytesIO(file_bytes)).pages)
+        if _text:
+            for _rec in records:
+                _ai_bk = (_rec.get("booking_no") or "").strip()
+                if _ai_bk and _ai_bk not in _text:
+                    _matches = _re.findall(rf"\w*{_re.escape(_ai_bk)}\w*", _text)
+                    if _matches:
+                        _rec["booking_no"] = max(_matches, key=len)
+    except Exception:
+        pass
+
+    return records
 
 
 # ─────────────────────────────────────────
