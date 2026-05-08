@@ -190,7 +190,7 @@ Rules:
   3. Value next to "Ref No", "Ref No.", "Reference No." — use as fallback if steps 1 and 2 yield nothing.
   4. Return null if nothing found.
   Do NOT use B/L No., forwarder ref (e.g. FLXCB-), CONSOL, or tracking number.
-  CRITICAL: Read EVERY character/digit of the booking number EXACTLY as printed — do NOT skip, merge, or drop repeated digits. If you see "80451557" do NOT shorten it to "8045157". Count the digits twice before returning. Common carrier prefixes (ZIM: GOSUBKK + 8 digits, Maersk: 9-10 digits, MSC: alphanumeric, ONE: 9 digits) — verify the length matches the carrier's typical format.
+  CRITICAL: Read EVERY character/digit of the booking number EXACTLY as printed — do NOT skip, merge, or drop repeated digits. If you see "80451557" do NOT shorten it to "8045157". Count the digits twice before returning to verify the length matches what's printed.
 - port_of_destination: final destination of the shipment — use the "To:" field in the booking header, or the last stop in the Intended Transport Plan. Do NOT use intermediate sea ports or terminal names (e.g. "Guadalajara Castilla La Mancha, Spain" not "APM Terminal Valencia").
 - country: use consignee's country if clearly stated in address; otherwise infer from port_of_destination.
 - cy_at: depot for picking up empty container. For Maersk bookings: use the location name of the "Empty Container Depot" row from the Load Itinerary table (Page 2).
@@ -436,7 +436,11 @@ def to_excel(df: pd.DataFrame) -> bytes:
         for row_idx in range(len(df)):
             fmt = alt_fmt if row_idx % 2 else cell_fmt
             for col_idx in range(len(df.columns)):
-                ws.write(row_idx + 1, col_idx, df.iloc[row_idx, col_idx], fmt)
+                v = df.iloc[row_idx, col_idx]
+                if pd.isna(v):
+                    ws.write_blank(row_idx + 1, col_idx, None, fmt)
+                else:
+                    ws.write(row_idx + 1, col_idx, v, fmt)
  
         ws.set_row(0, 22)
         ws.freeze_panes(1, 0)
