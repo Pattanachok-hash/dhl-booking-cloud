@@ -2280,13 +2280,10 @@ if page == "💰 Local Charges":
             st.markdown("**สรุป**")
             sc1, _, _, _, sc5, _ = st.columns([3, 1, 2, 2, 2, 1])
             sc1.markdown("<div style='padding-top:8px'>VAT 7%</div>", unsafe_allow_html=True)
-            # Auto-recompute VAT when items change, but allow user override
+            # Dynamic key: เปลี่ยนตาม items hash → reset เป็น _auto_vat อัตโนมัติเมื่อ items เปลี่ยน
             _auto_vat = round(charges_subtotal * 0.07, 2) if data.get("vat_applicable") else 0.0
             _items_hash = hash(tuple(round(float(it.get("total") or 0), 2) for it in current_items))
-            if st.session_state.get("vat_items_hash") != _items_hash:
-                st.session_state["vat_7"] = _auto_vat
-                st.session_state["vat_items_hash"] = _items_hash
-            vat_7 = sc5.number_input("_", min_value=0.0, step=0.01, format="%.2f", label_visibility="collapsed", key="vat_7")
+            vat_7 = sc5.number_input("_", value=_auto_vat, min_value=0.0, step=0.01, format="%.2f", label_visibility="collapsed", key=f"vat_7_{_items_hash}")
 
             after_vat = charges_subtotal + vat_7
             av1, _, _, _, av5, _ = st.columns([3, 1, 2, 2, 2, 1])
