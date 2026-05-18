@@ -666,6 +666,10 @@ Rules:
 - vat_applicable: true if invoice mentions "7% VAT", "VAT 7%", "7.00% PURSUANT TO SECTION 80 (2) OF TRC" or has a VAT line item. false otherwise.
   Exception: if the issuer is GEODIS and the VAT column explicitly shows "0%" or "0% = 0" (i.e. zero-rated), set vat_applicable = false regardless of whether a VAT column is present.
 - items: list of ALL charge line items found in the invoice (exclude VAT and WHT rows — those are calculated by the system).
+  CRITICAL row-handling rules:
+  1. ONE row in the invoice table = ONE item in the output. Do NOT split a single row into multiple items even if it contains a sub-description, alias, or alternate name on a second line (e.g. row "Documentation fee origin" with sub-text "SURRENDER FEE / TELEX-RELEASE FEE" and amount 1,500.00 → ONE item only, with the amount 1,500.00 — NOT two items).
+  2. The "Amount THB" of each item must come from the SAME row as its Charge Code/description. Do NOT mix amounts across rows. Re-verify row alignment before returning (e.g. if "B/L fee" is on row 4 with amount 1,500.00, do NOT pull the amount 450.00 from row 5).
+  3. After listing all items, the sum of their totals MUST equal the invoice "Net Total" / "Sub-total" / "Total before VAT" shown in the invoice. If the sum does not match, re-read the table — likely a row was duplicated or an amount was mis-aligned.
   - description: exact charge name as shown in invoice
   - category: classify this charge into one of these fixed values:
       "thc_40hc"        → Terminal Handling Charge for 40HC container
@@ -2276,7 +2280,13 @@ if page == "💰 Local Charges":
             st.markdown("**สรุป**")
             sc1, _, _, _, sc5, _ = st.columns([3, 1, 2, 2, 2, 1])
             sc1.markdown("<div style='padding-top:8px'>VAT 7%</div>", unsafe_allow_html=True)
-            vat_7 = sc5.number_input("_", value=float(data.get("vat_7") or 0), min_value=0.0, step=0.01, format="%.2f", label_visibility="collapsed", key="vat_7")
+            # Auto-recompute VAT when items change, but allow user override
+            _auto_vat = round(charges_subtotal * 0.07, 2) if data.get("vat_applicable") else 0.0
+            _items_hash = hash(tuple(round(float(it.get("total") or 0), 2) for it in current_items))
+            if st.session_state.get("vat_items_hash") != _items_hash:
+                st.session_state["vat_7"] = _auto_vat
+                st.session_state["vat_items_hash"] = _items_hash
+            vat_7 = sc5.number_input("_", min_value=0.0, step=0.01, format="%.2f", label_visibility="collapsed", key="vat_7")
 
             after_vat = charges_subtotal + vat_7
             av1, _, _, _, av5, _ = st.columns([3, 1, 2, 2, 2, 1])
