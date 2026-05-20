@@ -1216,13 +1216,91 @@ def generate_expense_pdf(records: list[dict], prepared_by: str = "", prepared_by
 
 
 # ─────────────────────────────────────────
+# 5d. RUN NO. ITEMS — PDF NUMBER OVERLAY
+# ─────────────────────────────────────────
+def number_items_in_pdf(pdf_bytes: bytes) -> bytes:
+    """Add sequential numbers (1,2,3...) to item lines in Invoice/Packing List PDF.
+    Invoice items numbered 1-N, PL items also 1-N (matching invoice).
+    Handles page-break case where P/O is on page N and item code is on page N+1."""
+    import fitz  # PyMuPDF
+    import re as _re
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    # Classify each page as invoice or pl (inherit from previous if ambiguous)
+    page_sections = []
+    current = "invoice"
+    for _pg in doc:
+        _txt = _pg.get_text()
+        if "PACKING LIST" in _txt:
+            current = "pl"
+        elif "*** INVOICE ***" in _txt:
+            current = "invoice"
+        page_sections.append(current)
+
+    # Collect all lines across all pages in document order (page → y → x)
+    ordered_lines = []
+    for _pn, _page in enumerate(doc):
+        _pdict = _page.get_text("dict")
+        _plines = []
+        for _block in _pdict.get("blocks", []):
+            for _line in _block.get("lines", []):
+                _spans = _line.get("spans", [])
+                if not _spans:
+                    continue
+                _ltext = "".join(s["text"] for s in _spans).strip()
+                if not _ltext:
+                    continue
+                _plines.append({"page": _pn, "text": _ltext, "bbox": _line["bbox"]})
+        _plines.sort(key=lambda l: (l["bbox"][1], l["bbox"][0]))
+        ordered_lines.extend(_plines)
+
+    _ITEM_RE = _re.compile(r"^[A-Z][A-Z0-9]*-")
+    counters = {"invoice": 0, "pl": 0}
+
+    for _i, _ln in enumerate(ordered_lines):
+        if "P/O NO" not in _ln["text"]:
+            continue
+        # Scan forward up to 100 lines to find the item code line
+        # (large window handles cross-page case: P/O at end of page, item code on next page after footer+header)
+        # Safe because we break at next P/O — won't false-match items belonging to a later P/O.
+        _found = None
+        for _j in range(_i + 1, min(_i + 101, len(ordered_lines))):
+            _cand = ordered_lines[_j]
+            _ctext = _cand["text"]
+            if not _ctext:
+                continue
+            if "P/O NO" in _ctext:
+                break  # next P/O — abort, item missing
+            if _ITEM_RE.match(_ctext):
+                _found = _cand
+                break
+        if _found is None:
+            continue
+        _section = page_sections[_found["page"]]
+        counters[_section] += 1
+        _n = counters[_section]
+        _x0, _y0, _x1, _y1 = _found["bbox"]
+        _mx = max(15.0, _x0 - 35.0)
+        doc[_found["page"]].insert_text(
+            (_mx, _y1 - 1.0),
+            f"{_n}.",
+            fontsize=9,
+            color=(0.83, 0.02, 0.07),
+        )
+
+    _out = doc.tobytes()
+    doc.close()
+    return _out
+
+
+# ─────────────────────────────────────────
 # 6. SIDEBAR NAVIGATION
 # ─────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 🚚 เมนู")
     page = st.radio(
         "เลือกเมนู",
-        ["📤 Upload & Extract", "📄 Generate SI (Draft)", "💰 Local Charges", "📊 Export Summary"],
+        ["📤 Upload & Extract", "📄 Generate SI (Draft)", "💰 Local Charges", "📊 Export Summary", "📝 Run No. Items"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -2585,3 +2663,32 @@ if page == "📊 Export Summary":
                 mime="application/pdf",
                 use_container_width=True,
             )
+
+# ─────────────────────────────────────────
+# 11. PAGE: RUN NO. ITEMS
+# ─────────────────────────────────────────
+if page == "📝 Run No. Items":
+    st.subheader("📝 ใส่เลขลำดับ Items ใน Invoice/Packing List")
+
+    pdf_file = st.file_uploader(
+        "อัปโหลด Invoice + Packing List PDF",
+        type="pdf",
+        key="num_items_up",
+    )
+
+    if pdf_file:
+        if st.button("🚀 สร้างไฟล์ที่มีเลขลำดับ", use_container_width=True):
+            with st.spinner("กำลังประมวลผล..."):
+                try:
+                    result_bytes = number_items_in_pdf(pdf_file.read())
+                    st.success("🎉 สำเร็จ!")
+                    st.download_button(
+                        "📥 ดาวน์โหลด PDF",
+                        data=result_bytes,
+                        file_name=f"numbered_{pdf_file.name}",
+                        mime="application/pdf",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+                    import traceback; st.code(traceback.format_exc())
