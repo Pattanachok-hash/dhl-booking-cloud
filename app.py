@@ -718,6 +718,7 @@ Rules:
     5d. If the issuer is GEODIS and no per-item WHT is stated:
        - WHT 0%: description contains "Late Pickup B/L" or "Late Pick-up B/L"
        - WHT 3%: any item whose description does NOT contain "Late Pickup B/L" or "Late Pick-up B/L"
+    5e. If the issuer is DACHSER and no per-item WHT is stated → wht_pct = 3 for ALL items.
     6. Default: 0
   - rate: unit rate in THB. If the invoice has a RATE column in foreign currency with an EXCH RATE column, convert: rate = RATE × EXCH RATE. If no rate is shown (flat fee), set rate = total.
     Exception: for DSV or SEKO THC items where qty is derived from the container count (see qty rule below), if no per-unit rate column is present set rate = round(total / qty, 2).
@@ -2432,6 +2433,63 @@ if page == "💰 Local Charges":
             df_lc = pd.DataFrame(lc_res.data)
             df_lc = bkk_time(df_lc, "created_at")
             st.dataframe(df_lc, use_container_width=True)
+
+            # ── Edit รายการ ───────────────────────────────────────
+            st.markdown("**✏️ แก้ไขรายการ**")
+            _edit_options = {
+                f"{r.get('agent_invoice_no') or r.get('ctc_invoice_no') or '-'} | {r.get('booking_no') or '-'} | {r.get('pay_to') or '-'} | {r.get('etd') or '-'}": r["id"]
+                for r in lc_res.data
+            }
+            _edit_label = st.selectbox(
+                "เลือกรายการที่ต้องการแก้ไข",
+                options=["— เลือก —"] + list(_edit_options.keys()),
+                key="lc_edit_select",
+            )
+            if _edit_label != "— เลือก —":
+                _edit_id = _edit_options[_edit_label]
+                _edit_row = next((r for r in lc_res.data if r["id"] == _edit_id), {})
+                with st.form("lc_edit_form"):
+                    _ec1, _ec2, _ec3 = st.columns(3)
+                    _e_agent_inv = _ec1.text_input("Agent Invoice No.", value=str(_edit_row.get("agent_invoice_no") or ""), key="lc_edit_agent_inv")
+                    _e_ctc_inv   = _ec2.text_input("CTC Invoice No.",   value=str(_edit_row.get("ctc_invoice_no") or ""),   key="lc_edit_ctc_inv")
+                    _e_booking   = _ec3.text_input("Booking No.",       value=str(_edit_row.get("booking_no") or ""),       key="lc_edit_booking")
+
+                    _ec4, _ec5, _ec6 = st.columns(3)
+                    _e_pay_to    = _ec4.text_input("Pay To",     value=str(_edit_row.get("pay_to") or ""),    key="lc_edit_pay_to")
+                    _e_tax_id    = _ec5.text_input("Tax ID No.", value=str(_edit_row.get("tax_id") or ""),    key="lc_edit_tax_id")
+                    _e_bl_no     = _ec6.text_input("B/L No.",    value=str(_edit_row.get("bl_no") or ""),     key="lc_edit_bl_no")
+
+                    _e_tax_name  = st.text_area("Tax Name & Address", value=str(_edit_row.get("tax_name") or ""), height=80, key="lc_edit_tax_name")
+
+                    _ec7, _ec8, _ec9 = st.columns(3)
+                    _e_delivery  = _ec7.text_input("Delivery Port",       value=str(_edit_row.get("delivery_port") or ""), key="lc_edit_delivery")
+                    _e_etd       = _ec8.text_input("ETD (DD/MM/YYYY)",    value=str(_edit_row.get("etd") or ""),           key="lc_edit_etd")
+                    _e_due       = _ec9.text_input("Due Date (DD/MM/YYYY)", value=str(_edit_row.get("due_date") or ""),    key="lc_edit_due")
+
+                    _e_remark    = st.text_input("Remark", value=str(_edit_row.get("remark") or ""), key="lc_edit_remark")
+
+                    _edit_submit = st.form_submit_button("💾 บันทึกการแก้ไข", use_container_width=True)
+
+                if _edit_submit:
+                    _upd_payload = {
+                        "agent_invoice_no": _e_agent_inv or None,
+                        "ctc_invoice_no":   _e_ctc_inv or None,
+                        "booking_no":       _e_booking or None,
+                        "pay_to":           _e_pay_to or None,
+                        "tax_id":           _e_tax_id or None,
+                        "tax_name":         _e_tax_name or None,
+                        "delivery_port":    _e_delivery or None,
+                        "etd":              _e_etd or None,
+                        "bl_no":            _e_bl_no or None,
+                        "due_date":         _e_due or None,
+                        "remark":           _e_remark or None,
+                    }
+                    try:
+                        supabase.table(TBL_LOCAL_CHARGES_V2).update(_upd_payload).eq("id", _edit_id).execute()
+                        st.success("✅ บันทึกการแก้ไขเรียบร้อยแล้ว")
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(f"❌ บันทึกไม่สำเร็จ: {_e}")
 
             st.markdown("**ลบรายการ**")
             delete_options = {
