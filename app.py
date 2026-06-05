@@ -719,6 +719,10 @@ Rules:
        - WHT 0%: description contains "Late Pickup B/L" or "Late Pick-up B/L"
        - WHT 3%: any item whose description does NOT contain "Late Pickup B/L" or "Late Pick-up B/L"
     5e. If the issuer is DACHSER and no per-item WHT is stated → wht_pct = 3 for ALL items.
+    5f. If the issuer is LOGWIN and no per-item WHT is stated, apply based on description keywords. IMPORTANT: check the WHT 3% list BEFORE the WHT 1% list (so "BL AMEND FEE" is matched as 3% before the generic "BL" 1% rule):
+       - WHT 3%: description contains "ENS", "AFR", "AMS", "ACI", "EDI", "VGM", "HANDLING", "FUMIGATE", "BL AMEND", "LIABILITY", "COMPLIANCE", "DATA TRANSFER", "ICS2", "EMISSION DETERMINATION", "LOGWIN SERVICE FEE", or any oversea/overseas charge
+       - WHT 1%: description contains "FREIGHT", "GRI", "LSS", "BUNKER", "DGR", "PEAK SEASON", "SEAL", "THC", "CFS", "DEM", "DET", "BL SUR", "TEX", "DISRUPT", "FUEL", or "BL"
+       - WHT 0%: all other charges
     6. Default: 0
   - rate: unit rate in THB. If the invoice has a RATE column in foreign currency with an EXCH RATE column, convert: rate = RATE × EXCH RATE. If no rate is shown (flat fee), set rate = total.
     Exception: for DSV or SEKO THC items where qty is derived from the container count (see qty rule below), if no per-unit rate column is present set rate = round(total / qty, 2).
