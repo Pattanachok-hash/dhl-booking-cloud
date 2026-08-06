@@ -3013,8 +3013,8 @@ Rules: numbers must be numbers, not strings. Use "" for unknown text, 0 for unkn
         return _ci_fit_patch(data_bytes)
 
     _so_pdf = st.file_uploader("อัปโหลด Shipping Order Requisition (PDF)", type="pdf", key="so_up")
-    if _so_pdf is not None and st.button("🔎 อ่านข้อมูลด้วย AI", key="so_read", use_container_width=True):
-        with st.spinner("AI กำลังอ่านเอกสาร..."):
+    if _so_pdf is not None and st.button("🔎 กำลังอ่านข้อมูลจากไฟล์ ", key="so_read", use_container_width=True):
+        with st.spinner("กำลังอ่านเอกสาร..."):
             try:
                 st.session_state["so_data"] = _so_extract(_so_pdf.read())
                 st.session_state.pop("so_xlsx", None)
@@ -3024,7 +3024,7 @@ Rules: numbers must be numbers, not strings. Use "" for unknown text, 0 for unkn
 
     if st.session_state.get("so_data"):
         _d = st.session_state["so_data"]
-        st.markdown("**ตรวจ/แก้ไขข้อมูล** (ช่องที่ AI ไม่แน่ใจอาจว่าง โปรดเติมเอง)")
+        st.markdown("**ตรวจ/แก้ไขข้อมูล** (ช่องที่ระบบไม่แน่ใจอาจว่าง โปรดเติมเอง)")
         c1, c2 = st.columns(2)
         _inv_no = c1.text_input("Invoice No.", _d.get("invoice_no", ""), key="so_invno")
         _cur    = c2.selectbox("Currency", ["USD", "THB"],
@@ -3105,5 +3105,5 @@ Rules: numbers must be numbers, not strings. Use "" for unknown text, 0 for unkn
                 file_name=st.session_state.get("so_xlsx_name", "INV & PL.xlsx"),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
-                key="so_dl",
+                key="so_dl_btn",
             )
