@@ -2053,9 +2053,23 @@ null if not found."""
     st.markdown("**Step 1 · เลือก Booking**")
     booking_map = {}
     try:
-        res2 = supabase.table(TBL_BOOKINGS).select("*").order("updated_at", desc=True).execute()
-        if res2.data:
-            for row in res2.data:
+        bk_data, _start = [], 0
+        while True:
+            _page = (
+                supabase.table(TBL_BOOKINGS)
+                .select("*")
+                .order("updated_at", desc=True)
+                .order("booking_no")
+                .range(_start, _start + 999)
+                .execute()
+                .data or []
+            )
+            bk_data.extend(_page)
+            if len(_page) < 1000:
+                break
+            _start += 1000
+        if bk_data:
+            for row in bk_data:
                 if row.get("booking_no"):
                     booking_map[row["booking_no"]] = row
     except Exception as e:
@@ -2202,8 +2216,22 @@ if page == "💰 Local Charges":
 
     # ── Booking No. dropdown ──────────────
     try:
-        bk_res = supabase.table(TBL_BOOKINGS).select("booking_no").order("updated_at", desc=True).execute()
-        bk_options = [r["booking_no"] for r in bk_res.data if r.get("booking_no")]
+        bk_data, _start = [], 0
+        while True:
+            _page = (
+                supabase.table(TBL_BOOKINGS)
+                .select("booking_no")
+                .order("updated_at", desc=True)
+                .order("booking_no")
+                .range(_start, _start + 999)
+                .execute()
+                .data or []
+            )
+            bk_data.extend(_page)
+            if len(_page) < 1000:
+                break
+            _start += 1000
+        bk_options = [r["booking_no"] for r in bk_data if r.get("booking_no")]
     except Exception:
         bk_options = []
 
@@ -2535,9 +2563,22 @@ if page == "📊 Export Summary":
     # ── Load all booking numbers that have local charges ──
     try:
         from collections import defaultdict
-        lc_res = supabase.table(TBL_LOCAL_CHARGES_V2).select("id,booking_no,ctc_invoice_no,exported_at").execute()
+        lc_data, _start = [], 0
+        while True:
+            _page = (
+                supabase.table(TBL_LOCAL_CHARGES_V2)
+                .select("id,booking_no,ctc_invoice_no,exported_at")
+                .order("id")
+                .range(_start, _start + 999)
+                .execute()
+                .data or []
+            )
+            lc_data.extend(_page)
+            if len(_page) < 1000:
+                break
+            _start += 1000
         bno_rows = defaultdict(list)
-        for r in lc_res.data:
+        for r in lc_data:
             if r.get("booking_no"):
                 bno_rows[r["booking_no"]].append(r)
     except Exception as e:
