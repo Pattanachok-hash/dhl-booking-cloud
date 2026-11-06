@@ -43,7 +43,7 @@ else:
     TBL_LOCAL_CHARGE_ITEMS = "test_local_charge_items"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-genai_client     = genai.Client(api_key=GEMINI_KEY)
+genai_client     = genai.Client(api_key=GEMINI_KEY, http_options=types.HttpOptions(api_version="v1beta"))
 GEMINI_MODEL_BOOKING = "models/gemini-2.5-flash"
 GEMINI_MODEL         = "models/gemini-2.5-flash"
 
